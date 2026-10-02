@@ -99,9 +99,16 @@ final class AppCoordinator: NSObject {
             self?.observeMouseGesture(event)
         }
         mouseMonitorAvailable = mouseMonitor != nil
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .flagsChanged]) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .flagsChanged, .keyDown]) { [weak self] event in
+            if event.type == .keyDown,
+               NSApp.isActive, NSApp.modalWindow == nil,
+               isCommandQuitShortcut(charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+                                     modifiers: event.modifierFlags) {
+                self?.quit()
+                return nil
+            }
             if event.type == .flagsChanged { self?.clickGesture?.observe(flags: event.modifierFlags.rawValue) }
-            else if let self, event.window !== self.floating.panel { self.invalidate() }
+            else if event.type == .leftMouseDown, let self, event.window !== self.floating.panel { self.invalidate() }
             return event
         }
         KeyboardShortcuts.onKeyUp(for: .toggleFloatingInputBar) { [weak self] in self?.togglePanel() }
