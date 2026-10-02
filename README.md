@@ -1,11 +1,6 @@
+<p align="center"><img src="Assets.xcassets/AppIcon.appiconset/icon_512x512.png" alt="PhrasePerch app icon" width="128"></p>
 <p align="center"><strong>PhrasePerch 是一款为 macOS 设计的悬浮文案快捷栏</strong></p>
 
-<table>
-<tr>
-  <td><img src="docs/FloatingBar-preview.png" alt="PhrasePerch 文案快捷栏" width="100%"></td>
-  <td><img src="docs/Authorization-guide-preview.png" alt="PhrasePerch 权限引导" width="100%"></td>
-</tr>
-</table>
 <p align="center">
   <a href="#安装与授权"><img src="https://img.shields.io/badge/target-macOS%2014%20%7C%20arm64-000000" alt="Target platform"></a>
   <a href="https://www.swift.org/"><img src="https://img.shields.io/badge/built%20with-Swift%206-F05138" alt="Swift 6"></a>
