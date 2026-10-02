@@ -8,8 +8,10 @@ final class CoreTests: XCTestCase {
     func testSettingsWindowIsReusedAfterRepeatedOpenAndClose() throws {
         let coordinator = AppCoordinator()
         coordinator.openSettings()
-        let first = try XCTUnwrap(NSApp.windows.first { $0.title == "PhrasePerch — 设置" })
+        let first = try XCTUnwrap(NSApp.windows.first { $0.title == "PhrasePerch" })
         defer { first.close(); coordinator.stop() }
+        XCTAssertTrue(first.titleVisibility == .visible)
+        XCTAssertFalse(first.styleMask.contains(.fullSizeContentView))
         coordinator.openSettings()
         XCTAssertEqual(NSApp.windows.filter { $0.title == first.title }.count, 1)
         first.close()
@@ -37,16 +39,20 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(InputAuthorizationStatus(accessibility: true, paste: true), .ready)
     }
     @MainActor
-    func testNativeAuthorizationPreviews() throws {
-        let states: [(InputAuthorizationStatus, String)] = [(.needsAccessibility, "waiting"), (.needsPasteAccess, "restart"), (.ready, "ready")]
+    func testPermissionRowPreviews() throws {
+        let states: [(String, String, Bool, String)] = [
+            ("辅助功能", "识别当前应用与可编辑输入位置", false, "waiting"),
+            ("粘贴输入", "将所选文案粘贴到目标应用", false, "paste"),
+            ("辅助功能", "识别当前应用与可编辑输入位置", true, "ready")
+        ]
         let docs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("docs")
-        for (status, filename) in states {
-            let view = NSHostingView(rootView: AuthorizationCard(status: status,
-                restarting: false, action: { _ in }).padding(20)
+        for (title, detail, isReady, filename) in states {
+            let view = NSHostingView(rootView: PermissionRow(title: title, detail: detail,
+                isReady: isReady, authorize: {}).padding(20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .background(Color(nsColor: .windowBackgroundColor)))
-            view.frame = CGRect(x: 0, y: 0, width: 300, height: 80)
-            view.appearance = NSAppearance(named: .aqua)
+            view.frame = CGRect(x: 0, y: 0, width: 420, height: 80)
+            view.appearance = NSAppearance(named: .darkAqua)
             view.layoutSubtreeIfNeeded()
             let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
             view.cacheDisplay(in: view.bounds, to: bitmap)
@@ -84,13 +90,16 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(controller.content, .authorization)
         XCTAssertFalse(controller.panel.canBecomeKey)
         let root = try XCTUnwrap(controller.panel.contentView)
-        let icon = try XCTUnwrap(root.subviews.compactMap { $0 as? ApplicationDragView }.first)
+        let dragRow = try XCTUnwrap(root.subviews.compactMap { $0 as? ApplicationDragView }.first)
+        XCTAssertGreaterThan(dragRow.frame.width, 100)
+        let blankArea = CGPoint(x: dragRow.frame.maxX - 2, y: dragRow.frame.midY)
+        XCTAssertTrue(dragRow.hitTest(blankArea) === dragRow)
         var accepted: [Bool] = []
-        icon.onDragEnded = { accepted.append($0) }
-        icon.finishDrag(operation: [])
-        icon.finishDrag(operation: .copy)
+        dragRow.onDragEnded = { accepted.append($0) }
+        dragRow.finishDrag(operation: [])
+        dragRow.finishDrag(operation: .copy)
         XCTAssertEqual(accepted, [false, true])
-        let item = icon.draggingItem()
+        let item = dragRow.draggingItem()
         XCTAssertEqual(item.item as? NSURL, Bundle.main.bundleURL as NSURL)
         let generalRevision = NSPasteboard.general.changeCount
         let board = NSPasteboard(name: NSPasteboard.Name("PhrasePerch-drag-test-\(UUID().uuidString)"))
@@ -133,6 +142,34 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AppConfiguration.self, from: data), updated)
         let preferences = try XCTUnwrap((JSONSerialization.jsonObject(with: data) as? [String: Any])?["preferences"] as? [String: Any])
         XCTAssertNil(preferences["hideAfterInsertion"])
+    }
+    func testAppEntryVisibilityAlwaysKeepsOneEntry() {
+        var visibility = AppEntryVisibility(dock: false, menuBar: false)
+        XCTAssertTrue(visibility.menuBar)
+        visibility.setMenuBar(false)
+        XCTAssertTrue(visibility.menuBar)
+        visibility.setDock(true)
+        visibility.setMenuBar(false)
+        XCTAssertTrue(visibility.dock)
+        XCTAssertFalse(visibility.menuBar)
+        visibility.setDock(false)
+        XCTAssertTrue(visibility.dock)
+    }
+    func testDockPolicyDoesNotRetryAnAlreadyVisibleDockEntry() {
+        XCTAssertFalse(dockPolicyChangeNeeded(currentDockVisible: true, requestedDockVisible: true))
+        XCTAssertTrue(dockPolicyChangeNeeded(currentDockVisible: false, requestedDockVisible: true))
+        XCTAssertTrue(dockPolicyChangeNeeded(currentDockVisible: true, requestedDockVisible: false))
+    }
+    func testFloatingButtonTitleMatchesCapsuleTruncation() {
+        XCTAssertEqual(floatingButtonTitle("继续"), "继续")
+        XCTAssertEqual(floatingButtonTitle("详细解释一下"), "详细解释…")
+        XCTAssertEqual(floatingButtonTitle("👩‍💻快速回复"), "👩‍💻快速回…")
+    }
+    func testCommandQIsRecognizedWithoutOtherModifiers() {
+        XCTAssertTrue(isCommandQuitShortcut(charactersIgnoringModifiers: "q", modifiers: .command))
+        XCTAssertFalse(isCommandQuitShortcut(charactersIgnoringModifiers: "q", modifiers: [.command, .shift]))
+        XCTAssertFalse(isCommandQuitShortcut(charactersIgnoringModifiers: "w", modifiers: .command))
+        XCTAssertFalse(isCommandQuitShortcut(charactersIgnoringModifiers: "q", modifiers: []))
     }
     func testPillGeometryAndPagination() {
         let visible = CGRect(x: -1440, y: -200, width: 1440, height: 900)
@@ -207,12 +244,12 @@ final class CoreTests: XCTestCase {
         let controller = FloatingPanelController()
         controller.showAuthorization(status: .needsAccessibility, feedback: "", applicationURL: Bundle.main.bundleURL)
         try await Task.sleep(for: .milliseconds(220))
-        let icon = try XCTUnwrap(controller.panel.contentView?.subviews.compactMap { $0 as? ApplicationDragView }.first)
+        let dragRow = try XCTUnwrap(controller.panel.contentView?.subviews.compactMap { $0 as? ApplicationDragView }.first)
         var accepted: [Bool] = []
         controller.onApplicationDragEnded = { accepted.append($0) }
-        icon.finishDrag(operation: [])
+        dragRow.finishDrag(operation: [])
         XCTAssertTrue(controller.isAuthorization)
-        icon.finishDrag(operation: .copy)
+        dragRow.finishDrag(operation: .copy)
         XCTAssertFalse(controller.isPresented)
         try await Task.sleep(for: .milliseconds(180))
         XCTAssertFalse(controller.panel.isVisible)

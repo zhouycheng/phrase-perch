@@ -4,6 +4,12 @@ import SwiftUI
 import ServiceManagement
 import KeyboardShortcuts
 import Observation
+
+func isCommandQuitShortcut(charactersIgnoringModifiers: String?, modifiers: NSEvent.ModifierFlags) -> Bool {
+    guard charactersIgnoringModifiers?.lowercased() == "q" else { return false }
+    return modifiers.intersection([.command, .option, .control, .shift]) == .command
+}
+
 extension KeyboardShortcuts.Name {
     static let toggleFloatingInputBar = Self("toggleFloatingInputBar")
 }
@@ -20,7 +26,9 @@ final class AppCoordinator: NSObject {
     var authorizationStatus: InputAuthorizationStatus {
         InputAuthorizationStatus(accessibility: accessibilityGranted, paste: postEventsGranted)
     }
-    private var requestedPaste = false
+    var dockIconVisible: Bool { entryVisibility.dock }
+    var menuBarIconVisible: Bool { entryVisibility.menuBar }
+    private(set) var entryVisibility = AppEntryVisibility.load()
     private(set) var mouseMonitorAvailable = false
     private(set) var loginEnabled = SMAppService.mainApp.status == .enabled
     var notice = ""
@@ -73,19 +81,7 @@ final class AppCoordinator: NSObject {
         }
     }
     func start() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "text.badge.plus", accessibilityDescription: "PhrasePerch")
-        let menu = NSMenu()
-        menu.addItem(withTitle: "启用／暂停", action: #selector(toggleEnabled), keyEquivalent: "")
-        menu.addItem(withTitle: "显示／收起快捷栏", action: #selector(togglePanel), keyEquivalent: "")
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "设置…", action: #selector(openSettings), keyEquivalent: ",")
-        menu.addItem(withTitle: "导入配置…", action: #selector(importConfiguration), keyEquivalent: "")
-        menu.addItem(withTitle: "导出配置…", action: #selector(exportConfiguration), keyEquivalent: "")
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
-        for entry in menu.items { entry.target = self }
-        item.menu = menu; statusItem = item
+        applyEntryVisibility()
         let workspace = NSWorkspace.shared.notificationCenter
         observe(workspace, NSWorkspace.didActivateApplicationNotification) { [weak self] in self?.frontChanged() }
         observe(workspace, NSWorkspace.didTerminateApplicationNotification) { [weak self] in self?.frontChanged() }
@@ -115,6 +111,55 @@ final class AppCoordinator: NSObject {
             Task { @MainActor in self?.tick() }
         }
         openSettings()
+    }
+    private func applyEntryVisibility() {
+        let requestedDockVisible = entryVisibility.dock
+        if dockPolicyChangeNeeded(currentDockVisible: NSApp.activationPolicy() == .regular,
+                                  requestedDockVisible: requestedDockVisible) {
+            _ = NSApp.setActivationPolicy(requestedDockVisible ? .regular : .accessory)
+        }
+        let actualDockVisible = NSApp.activationPolicy() == .regular
+        if actualDockVisible != requestedDockVisible {
+            if actualDockVisible {
+                entryVisibility.setDock(true)
+                notice = "Dock 图标仍然显示，菜单栏入口也已保留。"
+            } else {
+                entryVisibility.setMenuBar(true)
+                entryVisibility.setDock(false)
+                notice = "Dock 图标暂不可用，已保留菜单栏入口。"
+            }
+            entryVisibility.save()
+        }
+        if entryVisibility.menuBar {
+            guard statusItem == nil else { return }
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            item.button?.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: "PhrasePerch")
+            let menu = NSMenu()
+            menu.addItem(withTitle: "启用／暂停", action: #selector(toggleEnabled), keyEquivalent: "")
+            menu.addItem(withTitle: "显示／收起快捷栏", action: #selector(togglePanel), keyEquivalent: "")
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "打开 PhrasePerch", action: #selector(openSettings), keyEquivalent: ",")
+            menu.addItem(withTitle: "导入配置…", action: #selector(importConfiguration), keyEquivalent: "")
+            menu.addItem(withTitle: "导出配置…", action: #selector(exportConfiguration), keyEquivalent: "")
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
+            for entry in menu.items { entry.target = self }
+            item.menu = menu
+            statusItem = item
+        } else if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+            self.statusItem = nil
+        }
+    }
+    func setDockIconVisible(_ visible: Bool) {
+        entryVisibility.setDock(visible)
+        entryVisibility.save()
+        applyEntryVisibility()
+    }
+    func setMenuBarIconVisible(_ visible: Bool) {
+        entryVisibility.setMenuBar(visible)
+        entryVisibility.save()
+        applyEntryVisibility()
     }
     private func observe(_ center: NotificationCenter, _ name: Notification.Name,
                          callback: @escaping @MainActor () -> Void) {
@@ -164,9 +209,6 @@ final class AppCoordinator: NSObject {
     }
     func openAuthorizationSettings() {
         invalidate(); refreshPermissions()
-        if accessibilityGranted && !postEventsGranted && !requestedPaste {
-            requestedPaste = true; _ = CGRequestPostEventAccess()
-        }
         authorizationOpening = true
         let opened = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
         permissionFeedback = opened
@@ -192,6 +234,15 @@ final class AppCoordinator: NSObject {
                 watchAuthorization()
             }
         }
+    }
+    func requestPasteAuthorization() {
+        refreshPermissions()
+        guard !postEventsGranted else { return }
+        _ = CGRequestPostEventAccess()
+        refreshPermissions()
+        permissionFeedback = postEventsGranted ? "粘贴输入已授权。" : "等待系统确认粘贴输入权限。"
+        notice = permissionFeedback
+        watchAuthorization()
     }
     func restartForAuthorization() {
         guard !isRestarting else { return }
@@ -371,12 +422,14 @@ final class AppCoordinator: NSObject {
         invalidate()
         refreshPermissions()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 980, height: 650),
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1180, height: 780),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = "PhrasePerch — 设置"; window.isReleasedWhenClosed = false
+            window.title = "PhrasePerch"
+            window.titleVisibility = .visible
+            window.isReleasedWhenClosed = false
             window.contentViewController = NSHostingController(rootView: SettingsView(coordinator: self))
-            window.setContentSize(CGSize(width: 980, height: 650))
-            window.minSize = CGSize(width: 800, height: 520); window.center(); settingsWindow = window
+            window.setContentSize(CGSize(width: 1180, height: 780))
+            window.minSize = CGSize(width: 900, height: 600); window.center(); settingsWindow = window
         }
         NSApp.activate(ignoringOtherApps: true); settingsWindow?.makeKeyAndOrderFront(nil)
     }

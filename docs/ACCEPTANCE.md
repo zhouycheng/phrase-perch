@@ -1,14 +1,16 @@
 # 测试与验收记录
 
-当前版本：PhrasePerch 0.0.1（build 1） · Apple Silicon · macOS 27.0.1
+当前版本：PhrasePerch 0.0.1（build 4） · Apple Silicon · macOS 27.0.1
 
 ## 构建
 
 当前 Release 构建成功。产物为 arm64 macOS 应用，最低部署目标 macOS 14；签名为 ad hoc，未公证。A1 应用图标已通过 `Assets.xcassets/AppIcon.appiconset` 编入应用，包内 `CFBundleIconName` 为 `AppIcon`，`codesign --verify --strict` 检查通过。
 
+本机包：`../PhrasePerch-0.0.1-build4.app` 与 `../PhrasePerch-v0.0.1-build4-local.zip`（相对工程目录）。
+
 ## 自动化与原生界面检查
 
-Debug XCTest 共 26 项，通过 26 项，失败和跳过均为 0。覆盖应用身份、配置校验与保存、快捷键修饰状态、拖动选区条件、菜单分页、显示动画、取消后的过期回调及权限状态。
+Debug XCTest 共 30 项，通过 30 项，失败和跳过均为 0。新增验证应用窗口使用原生标题栏，以及 `⌘Q` 只在没有其他修饰键时触发退出；仍覆盖应用身份、配置校验与保存、快捷键修饰状态、拖动选区条件、菜单分页、显示动画、取消后的过期回调、权限行状态、Dock 策略幂等与菜单栏入口约束，以及胶囊文案截断。
 
 原生 AppKit 检查覆盖拖动文件 URL、剪贴板未被拖动过程改动、提示条位置边界和共享单面板行为。权限引导的拖入接受／拒绝收起分支以原生回调验证，不代表已经对系统设置列表完成实机拖入验收。
 

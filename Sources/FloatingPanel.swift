@@ -123,24 +123,59 @@ final class PillButton: FloatingButton {
 }
 
 // A native file drag, not an image or path string; AppKit uses the dragging pasteboard.
-final class ApplicationDragView: NSImageView, NSDraggingSource {
+final class ApplicationDragView: NSView, NSDraggingSource {
     let applicationURL: URL
+    private let applicationIcon: NSImage
+    private let iconView = NSImageView(frame: .zero)
+    private let nameLabel = NSTextField(labelWithString: "PhrasePerch")
+    private let statusLabel = NSTextField(labelWithString: "等待系统授权")
     var onDragEnded: ((Bool) -> Void)?
     init(applicationURL: URL, frame: CGRect) {
         self.applicationURL = applicationURL
+        applicationIcon = NSWorkspace.shared.icon(forFile: applicationURL.path)
         super.init(frame: frame)
-        image = NSWorkspace.shared.icon(forFile: applicationURL.path)
-        imageScaling = .scaleProportionallyUpOrDown
+        wantsLayer = true
+        layer?.cornerRadius = 9
+        layer?.borderWidth = 0.8
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
+        iconView.image = applicationIcon
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.frame = CGRect(x: 8, y: 6, width: 32, height: 32)
+        addSubview(iconView)
+        nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        nameLabel.frame = CGRect(x: 48, y: 3, width: frame.width - 58, height: 18)
+        addSubview(nameLabel)
+        statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.frame = CGRect(x: 48, y: 22, width: frame.width - 58, height: 15)
+        addSubview(statusLabel)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
         setAccessibilityLabel("拖动 PhrasePerch 应用到系统授权列表")
-        toolTip = "拖入应用列表，然后开启 PhrasePerch 开关"
+        setAccessibilityHelp("拖动此行到系统授权列表，然后开启 PhrasePerch 开关")
+        toolTip = "拖动此行到应用列表，然后开启 PhrasePerch 开关"
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview else { return nil }
+        return bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+        NSCursor.openHand.set()
+    }
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
+        NSCursor.arrow.set()
+    }
     func draggingItem() -> NSDraggingItem {
         let item = NSDraggingItem(pasteboardWriter: applicationURL as NSURL)
-        item.setDraggingFrame(bounds, contents: image)
+        item.setDraggingFrame(iconView.frame, contents: applicationIcon)
         return item
     }
     override func mouseDragged(with event: NSEvent) {
@@ -152,6 +187,11 @@ final class ApplicationDragView: NSImageView, NSDraggingSource {
         finishDrag(operation: operation)
     }
     func finishDrag(operation: NSDragOperation) { onDragEnded?(operation.contains(.copy)) }
+    func updateStatus(_ text: String, color: NSColor = .secondaryLabelColor) {
+        statusLabel.stringValue = text
+        statusLabel.textColor = color
+        statusLabel.toolTip = text
+    }
 }
 
 final class DragInstructionView: NSView {
@@ -196,7 +236,7 @@ final class FloatingPanelController: NSObject {
     var onDismiss: (() -> Void)?
     var onAuthorizationAction: ((AuthorizationAction) -> Void)?
     var onApplicationDragEnded: ((Bool) -> Void)?
-    private var authorizationFeedback = NSTextField(labelWithString: "")
+    private var applicationDragView: ApplicationDragView?
     private var restartButton: NSButton?
     var isAuthorization: Bool { content == .authorization && isPresented }
     private var snippets: [Snippet] = []
@@ -230,6 +270,7 @@ final class FloatingPanelController: NSObject {
     // Also used by the offscreen native rendering check, without opening a window or requiring AX permissions.
     func configure(profile: AppProfile, at point: CGPoint, visible: CGRect) {
         content = .snippets; panel.isMovableByWindowBackground = false
+        applicationDragView = nil
         panel.title = "PhrasePerch — 快捷栏"
         panel.setAccessibilityLabel("悬浮文案胶囊菜单")
         snippets = profile.buttons.filter(\.isEnabled); page = 0
@@ -246,13 +287,16 @@ final class FloatingPanelController: NSObject {
         root.appearance = NSAppearance(named: .darkAqua)
         root.wantsLayer = true; root.layer?.cornerRadius = 14; root.layer?.masksToBounds = true
         root.layer?.borderWidth = 0.8; root.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
-        let arrow = DragInstructionView(frame: CGRect(x: 12, y: 70, width: 26, height: 26))
+        let arrow = DragInstructionView(frame: CGRect(x: 12, y: 72, width: 26, height: 26))
         root.addSubview(arrow); arrow.animateHand()
-        authorizationFeedback = NSTextField(wrappingLabelWithString: "")
-        authorizationFeedback.frame = CGRect(x: 48, y: 59, width: frame.width - 80, height: 43)
-        authorizationFeedback.font = .systemFont(ofSize: 12, weight: .medium)
-        root.addSubview(authorizationFeedback)
-        let icon = ApplicationDragView(applicationURL: applicationURL, frame: CGRect(x: 16, y: 15, width: 32, height: 32))
+        let instruction = NSTextField(wrappingLabelWithString: "拖动下方 PhrasePerch 应用行到系统列表，然后开启开关。")
+        instruction.frame = CGRect(x: 48, y: 65, width: frame.width - 84, height: 40)
+        instruction.font = .systemFont(ofSize: 12, weight: .medium)
+        instruction.textColor = .labelColor
+        root.addSubview(instruction)
+        let icon = ApplicationDragView(applicationURL: applicationURL,
+                                       frame: CGRect(x: 16, y: 10, width: frame.width - 92, height: 44))
+        applicationDragView = icon
         let generation = presentation.generation
         icon.onDragEnded = { [weak self] accepted in
             guard let self, self.isAuthorization, self.presentation.generation == generation else { return }
@@ -260,9 +304,6 @@ final class FloatingPanelController: NSObject {
             self.onApplicationDragEnded?(accepted)
         }
         root.addSubview(icon)
-        let name = NSTextField(labelWithString: "PhrasePerch")
-        name.font = .systemFont(ofSize: 13, weight: .semibold)
-        name.frame = CGRect(x: 58, y: 21, width: 106, height: 22); root.addSubview(name)
         buttons = []; hitPaths = []
         func button(_ title: String, x: CGFloat, width: CGFloat, action: Selector) -> NSButton {
             let button = FloatingButton(frame: CGRect(x: x, y: 16, width: width, height: 28))
@@ -324,12 +365,15 @@ final class FloatingPanelController: NSObject {
     }
     func updateAuthorization(status: InputAuthorizationStatus, feedback: String) {
         guard content == .authorization else { return }
-        authorizationFeedback.stringValue = status == .needsPasteAccess
-            ? "识别已授权；若已开启开关，请重启使粘贴生效。"
-            : (status == .ready ? "授权完成，可以自动粘贴。" :
-                (feedback.hasPrefix("未接受") ? "未接受拖入，请重试；也可用列表的“＋”选择应用。" :
-                    "将图标拖入应用列表，然后开启 PhrasePerch 的开关。"))
-        authorizationFeedback.toolTip = feedback
+        if status == .needsPasteAccess {
+            applicationDragView?.updateStatus("辅助功能已授权，需要重启启用粘贴", color: .systemOrange)
+        } else if status == .ready {
+            applicationDragView?.updateStatus("授权已就绪")
+        } else if feedback.hasPrefix("未接受") {
+            applicationDragView?.updateStatus("未接受拖入，可重试或用“＋”添加", color: .systemOrange)
+        } else {
+            applicationDragView?.updateStatus("等待在系统列表中开启 PhrasePerch")
+        }
         restartButton?.isHidden = status != .needsPasteAccess
     }
     @objc private func restartAuthorization() { onAuthorizationAction?(.restart) }
@@ -482,7 +526,7 @@ final class FloatingPanelController: NSObject {
             button.isBordered = false; button.target = self; button.focusRingType = .none
             if slot < indices.count {
                 let index = indices.lowerBound + slot, title = snippets[index].title
-                button.title = String(title.prefix(4)) + (title.count > 4 ? "…" : "")
+                button.title = floatingButtonTitle(title)
                 button.setAccessibilityLabel(title); button.tag = index; button.action = #selector(insert(_:))
                 button.toolTip = String(snippets[index].text.prefix(180))
             } else {

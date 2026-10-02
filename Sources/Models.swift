@@ -62,6 +62,10 @@ struct Snippet: Codable, Identifiable, Equatable, Sendable {
     var isEnabled = true
 }
 
+func floatingButtonTitle(_ title: String) -> String {
+    String(title.prefix(4)) + (title.count > 4 ? "…" : "")
+}
+
 struct AppProfile: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var application: ApplicationIdentity
@@ -75,6 +79,43 @@ struct AppProfile: Codable, Identifiable, Equatable, Sendable {
 struct Preferences: Codable, Equatable, Sendable {
     var isEnabled = true
     var clickModifier = ClickModifier.option
+}
+
+struct AppEntryVisibility: Equatable {
+    private(set) var dock: Bool
+    private(set) var menuBar: Bool
+
+    static let dockKey = "PhrasePerch.dockIconVisible"
+    static let menuBarKey = "PhrasePerch.menuBarIconVisible"
+
+    init(dock: Bool = false, menuBar: Bool = true) {
+        self.dock = dock
+        self.menuBar = menuBar || !dock
+    }
+
+    mutating func setDock(_ visible: Bool) {
+        guard visible || menuBar else { return }
+        dock = visible
+    }
+
+    mutating func setMenuBar(_ visible: Bool) {
+        guard visible || dock else { return }
+        menuBar = visible
+    }
+
+    static func load(from defaults: UserDefaults = .standard) -> Self {
+        defaults.register(defaults: [dockKey: false, menuBarKey: true])
+        return Self(dock: defaults.bool(forKey: dockKey), menuBar: defaults.bool(forKey: menuBarKey))
+    }
+
+    func save(to defaults: UserDefaults = .standard) {
+        defaults.set(dock, forKey: Self.dockKey)
+        defaults.set(menuBar, forKey: Self.menuBarKey)
+    }
+}
+
+func dockPolicyChangeNeeded(currentDockVisible: Bool, requestedDockVisible: Bool) -> Bool {
+    currentDockVisible != requestedDockVisible
 }
 
 struct AppConfiguration: Codable, Equatable, Sendable {

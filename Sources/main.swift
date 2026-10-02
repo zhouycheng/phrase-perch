@@ -71,5 +71,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 let application = NSApplication.shared
 let delegate = AppDelegate()
 application.delegate = delegate
-application.setActivationPolicy(.accessory)
+let entryVisibility = AppEntryVisibility.load()
+application.setActivationPolicy(entryVisibility.dock ? .regular : .accessory)
 application.run()
