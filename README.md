@@ -5,12 +5,13 @@
   <a href="#安装与授权"><img src="https://img.shields.io/badge/target-macOS%2014%20%7C%20arm64-000000" alt="Target platform"></a>
   <a href="https://www.swift.org/"><img src="https://img.shields.io/badge/built%20with-Swift%206-F05138" alt="Swift 6"></a>
   <a href="https://developer.apple.com/documentation/appkit"><img src="https://img.shields.io/badge/UI-AppKit%20%2B%20SwiftUI-147EFB" alt="AppKit and SwiftUI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3DA639" alt="MIT License"></a>
   <br>
   <a href="#核心能力">核心能力</a> ·
   <a href="#安装与授权">安装与授权</a> ·
   <a href="#开发">开发</a> ·
   <a href="docs/ACCEPTANCE.md">测试记录</a> ·
-  <a href="https://github.com/zhouycheng/PhrasePerch/issues">问题反馈</a>
+  <a href="https://github.com/zhouycheng/phrase-perch/issues">问题反馈</a>
 </p>
 
 ## 核心能力
@@ -67,6 +68,6 @@ Resources/             第三方依赖许可
 docs/                  使用验收记录和构建资料
 ```
 
-## 许可
+## 许可证
 
-仓库暂不附 PhrasePerch 代码许可证。KeyboardShortcuts 依赖按 MIT License 发布，许可文本见 [第三方许可文件](Resources/KeyboardShortcuts-LICENSE.txt)。版本为 0.0.1（build 4）。
+PhrasePerch 使用 MIT License，许可条款见 [LICENSE](LICENSE)。第三方依赖 KeyboardShortcuts 3.1.0 也采用 MIT License，文本见 [第三方许可文件](Resources/KeyboardShortcuts-LICENSE.txt)。版本为 0.0.1（build 4）。
