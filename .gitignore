@@ -1,0 +1,14 @@
+.DS_Store
+.AppleDouble
+.LSOverride
+
+.build/
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xcresult/
+*.app/
+*.dSYM/
+*.zip

@@ -1,0 +1,9 @@
+{
+  "result": "Passed",
+  "passedTests": 26,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "platform": "macOS",
+  "architecture": "arm64",
+  "osVersion": "27.0.1"
+}

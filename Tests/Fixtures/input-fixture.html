@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>PhrasePerch · 独立输入验收</title>
+<style>body{font:16px system-ui;max-width:760px;margin:48px auto;padding:16px}label{display:block;margin:24px 0}input,textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:12px}textarea{height:180px}small{color:#666}</style>
+<h1>PhrasePerch · 独立输入验收</h1>
+<p>本页不联网、不提交表单。先放置光标，再点击目标应用的悬浮文案按钮。</p>
+<label>单行普通编辑位置<input aria-label="单行普通编辑位置" value="前文｜选区｜后文"></label>
+<label>多行普通编辑位置<textarea aria-label="多行普通编辑位置">前文｜选区｜后文</textarea></label>
+<label>只读位置（应拒绝）<input aria-label="只读位置" readonly value="只读原文，不应改变"></label>
+<label>密码位置（应拒绝）<input aria-label="密码位置" type="password" autocomplete="off"></label>
+<small>剪贴板检查由独立工具在按钮点击前后执行。不要把浏览器整体配置成功视为每种输入位置都兼容。</small>
+</html>
