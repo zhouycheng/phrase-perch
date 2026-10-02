@@ -163,8 +163,8 @@ private struct HomePage: View {
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "text.badge.plus").font(.system(size: 34)).foregroundStyle(.secondary)
-                            Text("添加一个应用开始设置").font(.title3.weight(.medium))
-                            Text("每个应用可以拥有独立的快捷文案。")
+                            Text("添加应用以设置快捷文案").font(.title3.weight(.medium))
+                            Text("为不同应用配置各自的文案和触发方式。")
                                 .foregroundStyle(.secondary)
                         }
                         .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
@@ -189,7 +189,7 @@ private struct MenuBarPreview: View {
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 if snippets.isEmpty {
-                    Text("添加文案后会显示在这里")
+                    Text("启用的文案会显示在这里")
                         .font(.callout).foregroundStyle(.secondary)
                         .padding(.horizontal, 20)
                 } else {
@@ -247,7 +247,7 @@ private struct ApplicationList: View {
                         }
                         VStack(alignment: .leading, spacing: 3) {
                             Text(profile.displayName).lineLimit(1)
-                            Text(profile.isEnabled ? "\(profile.buttons.filter(\.isEnabled).count) 个文案" : "已停用")
+                            Text(profile.isEnabled ? "\(profile.buttons.filter(\.isEnabled).count) 条文案" : "已停用")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -264,7 +264,7 @@ private struct ApplicationList: View {
             HStack(spacing: 8) {
                 Menu {
                     Button("选择 .app 文件…", action: coordinator.chooseApplications)
-                    Menu("运行中的应用") {
+                    Menu("正在运行的应用") {
                         ForEach(NSWorkspace.shared.runningApplications.filter {
                             $0.activationPolicy == .regular && $0.bundleURL != nil
                         }, id: \.processIdentifier) { app in
@@ -315,8 +315,8 @@ private struct ProfileEditor: View {
             }
 
             Picker("触发方式", selection: $profile.displayMode) {
-                Text("按键点击 + 快捷键").tag(DisplayMode.modifierClick)
-                Text("仅快捷键").tag(DisplayMode.shortcutOnly)
+                Text("修饰键点击与快捷键").tag(DisplayMode.modifierClick)
+                Text("仅使用快捷键").tag(DisplayMode.shortcutOnly)
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 380, alignment: .leading)
@@ -343,11 +343,11 @@ private struct ProfileEditor: View {
 
                     HStack(spacing: 8) {
                         Button {
-                            let button = Snippet(title: "新按钮", text: "请在这里填写正文。")
+                            let button = Snippet(title: "新文案", text: "在这里填写要插入的内容。")
                             profile.buttons.append(button)
                             selectedSnippet = button.id
                         } label: {
-                            Label("新增", systemImage: "plus")
+                            Label("添加文案", systemImage: "plus")
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -359,7 +359,8 @@ private struct ProfileEditor: View {
                             profile.buttons.append(copy); selectedSnippet = copy.id
                         } label: { Image(systemName: "plus.square.on.square") }
                             .buttonStyle(.bordered).controlSize(.small)
-                            .help("复制文案").disabled(selectedSnippet == nil)
+                            .help("复制所选文案条目").accessibilityLabel("复制所选文案条目")
+                            .disabled(selectedSnippet == nil)
                         Button(role: .destructive) { deletingSnippet = true } label: { Image(systemName: "trash") }
                             .buttonStyle(.bordered).controlSize(.small)
                             .help("删除文案").disabled(selectedSnippet == nil)
@@ -377,12 +378,12 @@ private struct ProfileEditor: View {
                 if let index = profile.buttons.firstIndex(where: { $0.id == selectedSnippet }) {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 14) {
-                            TextField("按钮名称", text: $profile.buttons[index].title)
+                            TextField("快捷栏标题", text: $profile.buttons[index].title)
                                 .font(.title3.weight(.semibold))
                             Toggle("在快捷栏显示", isOn: $profile.buttons[index].isEnabled)
                                 .fixedSize()
                         }
-                        Text("文案正文").font(.headline)
+                        Text("插入内容").font(.headline)
                         TextEditor(text: $profile.buttons[index].text)
                             .font(.body)
                             .scrollContentBackground(.hidden)
@@ -468,7 +469,7 @@ private struct SettingsPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                pageHeader("设置", subtitle: "调整触发方式、权限与应用入口")
+                pageHeader("设置", subtitle: "管理快捷栏、系统权限和启动方式")
 
                 SurfaceCard(title: "触发条件", symbol: "cursorarrow.click") {
                     VStack(alignment: .leading, spacing: 14) {
@@ -477,7 +478,7 @@ private struct SettingsPage: View {
                             set: { coordinator.store.configuration.preferences.isEnabled = $0 }))
                             .disabled(!coordinator.store.isReady)
                         Divider()
-                        Picker("按住按键点击或拖选", selection: Binding(
+                        Picker("点击或拖选的修饰键", selection: Binding(
                             get: { coordinator.store.configuration.preferences.clickModifier },
                             set: { coordinator.store.configuration.preferences.clickModifier = $0 })) {
                             Text("Option ⌥").tag(ClickModifier.option)
@@ -485,23 +486,23 @@ private struct SettingsPage: View {
                             Text("Shift ⇧").tag(ClickModifier.shift)
                         }
                         .disabled(!coordinator.store.isReady)
-                        Text("按住触发键点击输入框，或拖动选择文字；松开后显示文案菜单。普通点击不会触发。")
+                        Text("按住修饰键点击可编辑位置，或拖动选中文字；松开后打开快捷栏。")
                             .font(.caption).foregroundStyle(.secondary)
-                        KeyboardShortcuts.Recorder("显示／收起快捷栏", name: .toggleFloatingInputBar)
+                        KeyboardShortcuts.Recorder("打开/收起快捷栏", name: .toggleFloatingInputBar)
                     }
                 }
 
-                SurfaceCard(title: "权限配置", symbol: "hand.raised") {
+                SurfaceCard(title: "系统权限", symbol: "hand.raised") {
                     VStack(alignment: .leading, spacing: 13) {
-                        PermissionRow(title: "辅助功能", detail: "识别当前应用与可编辑输入位置",
+                        PermissionRow(title: "辅助功能", detail: "读取当前应用和可编辑文本位置",
                                       isReady: coordinator.accessibilityGranted,
                                       authorize: coordinator.openAuthorizationSettings)
                         Divider()
-                        PermissionRow(title: "粘贴输入", detail: "将所选文案粘贴到目标应用",
+                        PermissionRow(title: "粘贴输入", detail: "向目标应用发送一次粘贴快捷键",
                                       isReady: coordinator.postEventsGranted,
                                       authorize: coordinator.requestPasteAuthorization)
                         if !coordinator.mouseMonitorAvailable {
-                            Text("鼠标监听暂不可用，可使用上方录制的快捷键。")
+                            Text("鼠标触发暂不可用，仍可使用上方录制的快捷键。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -514,17 +515,17 @@ private struct SettingsPage: View {
                             set: { coordinator.setLoginEnabled($0) }))
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Divider()
-                        Toggle("Dock 栏图标显示", isOn: Binding(
+                        Toggle("在 Dock 中显示图标", isOn: Binding(
                             get: { coordinator.dockIconVisible },
                             set: { coordinator.setDockIconVisible($0) }))
                             .disabled(!coordinator.menuBarIconVisible)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Toggle("菜单栏图标显示", isOn: Binding(
+                        Toggle("在菜单栏显示图标", isOn: Binding(
                             get: { coordinator.menuBarIconVisible },
                             set: { coordinator.setMenuBarIconVisible($0) }))
                             .disabled(!coordinator.dockIconVisible)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("Dock 与菜单栏至少保留一个入口。")
+                        Text("请至少保留 Dock 或菜单栏中的一个入口。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -534,7 +535,7 @@ private struct SettingsPage: View {
                         Button("导入配置…", action: coordinator.importConfiguration)
                         Button("导出配置…", action: coordinator.exportConfiguration)
                         Spacer()
-                        Text("文案保存在本机")
+                        Text("配置保存在本机")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -579,6 +580,7 @@ private struct AboutPage: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
                 .resizable().interpolation(.high).frame(width: 112, height: 112)
             Text("PhrasePerch").font(.largeTitle.weight(.semibold))
+            Text("按应用管理快捷文案").font(.callout).foregroundStyle(.secondary)
             Text("v\(version)").font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

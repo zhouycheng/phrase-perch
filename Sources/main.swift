@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             instanceLock = descriptor
         } catch {
             let alert = NSAlert()
-            alert.messageText = "PhrasePerch无法启动"
+            alert.messageText = "PhrasePerch 无法启动"
             alert.informativeText = error.localizedDescription
             alert.runModal()
             NSApp.terminate(nil)
@@ -53,9 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let saved = await coordinator.store.flush()
             if saved { sender.reply(toApplicationShouldTerminate: true) }
             else {
-                let alert = NSAlert(); alert.messageText = "配置尚未保存"
-                alert.informativeText = "\(coordinator.store.errorMessage ?? "保存失败")。退出会丢失未保存草稿。"
-                alert.addButton(withTitle: "保留草稿，取消退出"); alert.addButton(withTitle: "放弃草稿并退出")
+                let alert = NSAlert(); alert.messageText = "更改尚未保存"
+                alert.informativeText = "\(coordinator.store.errorMessage ?? "保存失败")。退出后，未保存的更改将丢失。"
+                alert.addButton(withTitle: "取消退出"); alert.addButton(withTitle: "放弃更改并退出")
                 sender.reply(toApplicationShouldTerminate: alert.runModal() == .alertSecondButtonReturn)
             }
         }

@@ -209,7 +209,7 @@ final class TextInsertionService {
                 if result == .dispatchedUnverified, let partial { result = partial }
             }
             message = result == .dispatchedUnverified
-                ? "已复制并发送粘贴，请查看目标应用" : result.message
+                ? "文案已复制，粘贴操作已发送；请检查目标应用。" : result.message
         } catch {
             result = gate.mayHaveMutated ? .indeterminate : .notWritten
             if !gate.mayHaveMutated, clipboardRevision != nil {

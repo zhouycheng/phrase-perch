@@ -204,7 +204,7 @@ enum InsertionResult: String, Sendable {
     var message: String {
         switch self {
         case .insertedVerified: "已插入"
-        case .dispatchedUnverified: "已发送输入，请查看目标应用"
+        case .dispatchedUnverified: "粘贴操作已发送，请检查目标应用。"
         case .notWritten: "未写入，请先将光标放到可输入位置"
         case .unsupported: "当前输入位置暂不支持"
         case .interruptedAfterDispatch: "输入已停止，请检查已输入内容"

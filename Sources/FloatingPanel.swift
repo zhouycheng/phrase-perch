@@ -152,9 +152,9 @@ final class ApplicationDragView: NSView, NSDraggingSource {
         statusLabel.frame = CGRect(x: 48, y: 22, width: frame.width - 58, height: 15)
         addSubview(statusLabel)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
-        setAccessibilityLabel("拖动 PhrasePerch 应用到系统授权列表")
-        setAccessibilityHelp("拖动此行到系统授权列表，然后开启 PhrasePerch 开关")
-        toolTip = "拖动此行到应用列表，然后开启 PhrasePerch 开关"
+        setAccessibilityLabel("将 PhrasePerch 拖入辅助功能列表")
+        setAccessibilityHelp("拖动此行到系统设置的辅助功能列表，然后开启 PhrasePerch")
+        toolTip = "拖动此行到辅助功能列表，然后开启 PhrasePerch"
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var isFlipped: Bool { true }
@@ -289,7 +289,7 @@ final class FloatingPanelController: NSObject {
         root.layer?.borderWidth = 0.8; root.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
         let arrow = DragInstructionView(frame: CGRect(x: 12, y: 72, width: 26, height: 26))
         root.addSubview(arrow); arrow.animateHand()
-        let instruction = NSTextField(wrappingLabelWithString: "拖动下方 PhrasePerch 应用行到系统列表，然后开启开关。")
+        let instruction = NSTextField(wrappingLabelWithString: "将下方 PhrasePerch 拖入系统设置的辅助功能列表，然后开启权限。")
         instruction.frame = CGRect(x: 48, y: 65, width: frame.width - 84, height: 40)
         instruction.font = .systemFont(ofSize: 12, weight: .medium)
         instruction.textColor = .labelColor
@@ -366,13 +366,13 @@ final class FloatingPanelController: NSObject {
     func updateAuthorization(status: InputAuthorizationStatus, feedback: String) {
         guard content == .authorization else { return }
         if status == .needsPasteAccess {
-            applicationDragView?.updateStatus("辅助功能已授权，需要重启启用粘贴", color: .systemOrange)
+            applicationDragView?.updateStatus("辅助功能已授权；重启后启用粘贴", color: .systemOrange)
         } else if status == .ready {
             applicationDragView?.updateStatus("授权已就绪")
-        } else if feedback.hasPrefix("未接受") {
-            applicationDragView?.updateStatus("未接受拖入，可重试或用“＋”添加", color: .systemOrange)
+        } else if feedback.hasPrefix("尚未添加") {
+            applicationDragView?.updateStatus("未完成添加；可重试拖动，或通过“+”选择应用", color: .systemOrange)
         } else {
-            applicationDragView?.updateStatus("等待在系统列表中开启 PhrasePerch")
+            applicationDragView?.updateStatus("请在系统设置中开启 PhrasePerch")
         }
         restartButton?.isHidden = status != .needsPasteAccess
     }

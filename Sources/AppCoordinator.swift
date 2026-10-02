@@ -67,7 +67,7 @@ final class AppCoordinator: NSObject {
         }
         floating.onApplicationDragEnded = { [weak self] accepted in
             guard let self else { return }
-            permissionFeedback = accepted ? "已加入系统列表，请开启 PhrasePerch 的开关。" : "未接受拖入，请重试。"
+            permissionFeedback = accepted ? "已添加到辅助功能列表，请开启 PhrasePerch。" : "尚未添加，请重新拖动 PhrasePerch。"
             refreshPermissions()
             watchAuthorization()
         }
@@ -187,7 +187,7 @@ final class AppCoordinator: NSObject {
         accessibilityGranted = trusted; postEventsGranted = events
         if authorizationStatus == .ready { stopAuthorizationWatch() }
         if authorizationStatus != previous {
-            permissionFeedback = authorizationStatus == .ready ? "权限检查通过，自动粘贴已可用。" : "权限状态已更新。"
+            permissionFeedback = authorizationStatus == .ready ? "权限已就绪，可以使用快捷栏。" : "权限状态已更新。"
         }
         if floating.isAuthorization {
             floating.updateAuthorization(status: authorizationStatus, feedback: permissionFeedback)
@@ -219,8 +219,8 @@ final class AppCoordinator: NSObject {
         authorizationOpening = true
         let opened = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
         permissionFeedback = opened
-            ? "将图标拖入应用列表，再开启 PhrasePerch 的开关。权限会自动检查。"
-            : "未能打开授权页面。请从苹果菜单打开系统设置 → 隐私与安全性，找到应用控制权限。"
+            ? "在系统设置的“辅助功能”中添加 PhrasePerch 并开启权限，状态会自动更新。"
+            : "无法打开授权页面。请在系统设置的“隐私与安全性”中打开“辅助功能”。"
         refreshPermissions()
         let version = panelVersion
         Task {
@@ -247,7 +247,7 @@ final class AppCoordinator: NSObject {
         guard !postEventsGranted else { return }
         _ = CGRequestPostEventAccess()
         refreshPermissions()
-        permissionFeedback = postEventsGranted ? "粘贴输入已授权。" : "等待系统确认粘贴输入权限。"
+        permissionFeedback = postEventsGranted ? "粘贴权限已就绪。" : "等待系统确认粘贴权限。"
         notice = permissionFeedback
         watchAuthorization()
     }
@@ -383,7 +383,7 @@ final class AppCoordinator: NSObject {
     @objc func togglePanel() {
         if floating.isPresented { dismissed = true; invalidate(); return }
         target = NSWorkspace.shared.frontmostApplication; dismissed = false
-        guard let target, let profile = profile(for: target) else { notice = "当前应用未配置，请在设置中添加"; return }
+        guard let target, let profile = profile(for: target) else { notice = "当前应用尚未添加，请先在 PhrasePerch 中添加。"; return }
         show(profile)
     }
     @objc private func toggleEnabled() { store.configuration.preferences.isEnabled.toggle(); invalidate() }
@@ -391,7 +391,7 @@ final class AppCoordinator: NSObject {
     func addApplication(_ url: URL) {
         guard let bundle = Bundle(url: url), url.pathExtension == "app" else { notice = "请选择有效的 .app 应用包"; return }
         let identity = ApplicationIdentity(bundleIdentifier: bundle.bundleIdentifier, fallbackBundlePath: url.path)
-        guard !store.configuration.profiles.contains(where: { $0.application.key == identity.key }) else { notice = "该应用已添加；相同 Bundle Identifier 共享规则"; return }
+        guard !store.configuration.profiles.contains(where: { $0.application.key == identity.key }) else { notice = "此应用已在列表中。"; return }
         let name = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? url.deletingPathExtension().lastPathComponent
         store.configuration.profiles.append(AppProfile(application: identity, displayName: name,

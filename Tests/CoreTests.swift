@@ -300,9 +300,8 @@ final class CoreTests: XCTestCase {
         root.appearance = NSAppearance(named: .darkAqua)
         let bitmap = try XCTUnwrap(root.bitmapImageRepForCachingDisplay(in: root.bounds))
         root.cacheDisplay(in: root.bounds, to: bitmap)
-        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let docs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("docs")
-        try data.write(to: docs.appendingPathComponent("FloatingBar-preview.png"))
+        let preview = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        XCTAssertFalse(preview.isEmpty)
     }
     @MainActor
     func testClipboardRoundTripAndExactText() throws {
