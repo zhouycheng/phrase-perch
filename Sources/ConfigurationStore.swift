@@ -52,13 +52,19 @@ final class ConfigurationStore {
     var errorMessage: String?
     private(set) var isReady = false
     private(set) var revision = 0
+    private(set) var savedRevision = 0
+    var saveStatus: String {
+        if errorMessage != nil { return "保存失败" }
+        if !isReady { return "正在加载" }
+        return savedRevision == revision ? "已保存" : "正在保存…"
+    }
     private let disk: ConfigurationDisk
     private var saveTask: Task<Void, Never>?
     private var loading = true
 
-    init() {
+    init(directory: URL? = nil) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        disk = ConfigurationDisk(directory: support.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar"))
+        disk = ConfigurationDisk(directory: directory ?? support.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar"))
         Task {
             do {
                 configuration = try await disk.load()
@@ -78,7 +84,7 @@ final class ConfigurationStore {
                 try await Task.sleep(for: .milliseconds(400))
                 try Task.checkCancellation()
                 try await disk.save(value)
-                if capturedRevision == revision { errorMessage = nil }
+                if capturedRevision == revision { savedRevision = capturedRevision; errorMessage = nil }
             } catch is CancellationError { } catch {
                 errorMessage = "保存失败，草稿仍在内存中：\(error.localizedDescription)"
             }
@@ -87,7 +93,12 @@ final class ConfigurationStore {
 
     func flush() async -> Bool {
         saveTask?.cancel()
-        do { try await disk.save(configuration); errorMessage = nil; return true }
+        do {
+            let capturedRevision = revision
+            try await disk.save(configuration)
+            if capturedRevision == revision { savedRevision = capturedRevision; errorMessage = nil }
+            return true
+        }
         catch { errorMessage = "保存失败：\(error.localizedDescription)"; return false }
     }
 
@@ -96,7 +107,7 @@ final class ConfigurationStore {
             let recovered = try await disk.latestBackup()
             try await disk.save(recovered)
             loading = true; configuration = recovered; loading = false
-            isReady = true; revision += 1; errorMessage = nil
+            isReady = true; revision += 1; savedRevision = revision; errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -110,7 +121,7 @@ final class ConfigurationStore {
         do {
             try await disk.save(config)
             loading = true; configuration = config; loading = false
-            isReady = true; revision += 1; errorMessage = nil
+            isReady = true; revision += 1; savedRevision = revision; errorMessage = nil
         } catch { errorMessage = "导入失败，现有配置保留：\(error.localizedDescription)" }
     }
 

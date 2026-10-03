@@ -42,7 +42,7 @@ struct AuthorizationEnvironment {
 
 @MainActor @Observable
 final class AppCoordinator: NSObject {
-    let store = ConfigurationStore()
+    let store: ConfigurationStore
     let input = TextInsertionService()
     private(set) var accessibilityGranted = false
     private(set) var postEventsGranted = false
@@ -91,7 +91,9 @@ final class AppCoordinator: NSObject {
     static let restartPendingKey = "PhrasePerch.authorizationRestartPending"
 
     override convenience init() { self.init(authorization: AuthorizationEnvironment()) }
-    init(authorization: AuthorizationEnvironment, defaults: UserDefaults = .standard) {
+    init(authorization: AuthorizationEnvironment, defaults: UserDefaults = .standard,
+         store: ConfigurationStore = ConfigurationStore()) {
+        self.store = store
         authorizationEnvironment = authorization
         authorizationDefaults = defaults
         authorizationFlow = AuthorizationFlow(afterRestart: defaults.string(forKey: Self.restartPendingKey) == Bundle.main.bundlePath)

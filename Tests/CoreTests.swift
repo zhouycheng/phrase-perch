@@ -59,6 +59,45 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(DisplayMode.self, from: Data("\"modifierClick\"".utf8)), .modifierClick)
     }
 
+    @MainActor
+    func testEditorAutoSaveStatusFailureRetryAndBackupRecovery() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(store.isReady)
+        var profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.editor", fallbackBundlePath: nil),
+                                 displayName: "Editor", buttons: [Snippet(title: "第一条", text: "初始正文")])
+        store.configuration.profiles = [profile]
+        XCTAssertEqual(store.saveStatus, "正在保存…")
+        var saved = await store.flush()
+        XCTAssertTrue(saved)
+        XCTAssertEqual(store.saveStatus, "已保存")
+        profile.buttons[0].text = "修改后的正文"
+        store.configuration.profiles = [profile]
+        for _ in 0..<100 where store.savedRevision != store.revision {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(store.saveStatus, "已保存")
+        let disk = ConfigurationDisk(directory: directory)
+        let readback = try await disk.load()
+        XCTAssertEqual(readback.profiles[0].buttons[0].text, "修改后的正文")
+        profile.buttons[0].title = ""
+        store.configuration.profiles = [profile]
+        saved = await store.flush()
+        XCTAssertFalse(saved)
+        XCTAssertEqual(store.saveStatus, "保存失败")
+        XCTAssertEqual(store.configuration.profiles[0].buttons[0].text, "修改后的正文")
+        profile.buttons[0].title = "修复标题"
+        store.configuration.profiles = [profile]
+        saved = await store.flush()
+        XCTAssertTrue(saved)
+        XCTAssertEqual(store.saveStatus, "已保存")
+        await store.restoreBackup()
+        XCTAssertEqual(store.configuration.profiles[0].buttons[0].title, "第一条")
+        XCTAssertEqual(store.saveStatus, "已保存")
+    }
+
     func testExclusiveAppLockAndRelease() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
