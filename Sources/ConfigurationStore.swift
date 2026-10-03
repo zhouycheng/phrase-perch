@@ -45,17 +45,32 @@ actor ConfigurationDisk {
     }
 }
 
+struct ConfigurationIssue: Equatable {
+    enum Operation: String {
+        case load = "读取失败", save = "保存失败", recovery = "恢复失败"
+        case importFile = "导入失败", exportFile = "导出失败"
+    }
+    let operation: Operation
+    let message: String
+}
+
 @MainActor @Observable
 final class ConfigurationStore {
-    var configuration = AppConfiguration() { didSet { scheduleSave(); onChange?() } }
+    var configuration = AppConfiguration() { didSet { updateValidation(); scheduleSave(); onChange?() } }
     @ObservationIgnored var onChange: (() -> Void)?
-    var errorMessage: String?
+    private(set) var saveIssue: ConfigurationIssue?
+    private var operationIssue: ConfigurationIssue?
+    var issue: ConfigurationIssue? { saveIssue ?? operationIssue }
     private(set) var isReady = false
     private(set) var revision = 0
     private(set) var savedRevision = 0
+    private(set) var validationMessage: String?
+    // Used by the save-before-quit flow; field validation is not a disk failure.
+    var errorMessage: String? { validationMessage ?? issue?.message }
     var saveStatus: String {
-        if errorMessage != nil { return "保存失败" }
-        if !isReady { return "正在加载" }
+        if !isReady { return issue == nil ? "正在加载" : "读取失败" }
+        if validationMessage != nil { return "待补全" }
+        if saveIssue != nil { return "保存失败" }
         return savedRevision == revision ? "已保存" : "正在保存…"
     }
     private let disk: ConfigurationDisk
@@ -65,50 +80,85 @@ final class ConfigurationStore {
     init(directory: URL? = nil) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         disk = ConfigurationDisk(directory: directory ?? support.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar"))
-        Task {
-            do {
-                configuration = try await disk.load()
-                isReady = true
-            } catch { errorMessage = "配置读取失败，原文件已保留：\(error.localizedDescription)" }
-            loading = false
-        }
+        Task { await load() }
+    }
+
+    private func load() async {
+        do {
+            configuration = try await disk.load()
+            isReady = true; clearIssues()
+        } catch { report(.load, message: "配置读取失败，原文件已保留：\(error.localizedDescription)") }
+        loading = false
+    }
+
+    func retryLoad() async {
+        guard !isReady, !loading else { return }
+        loading = true
+        await load()
+    }
+
+    func report(_ operation: ConfigurationIssue.Operation, message: String) {
+        let reported = ConfigurationIssue(operation: operation, message: message)
+        if operation == .save { saveIssue = reported } else { operationIssue = reported }
+    }
+
+    private func clearIssues() { saveIssue = nil; operationIssue = nil }
+
+    private func didSave(_ capturedRevision: Int) {
+        guard capturedRevision == revision else { return }
+        savedRevision = capturedRevision
+        saveIssue = nil
+    }
+
+    private func updateValidation() {
+        do { try configuration.validate(); validationMessage = nil }
+        catch { validationMessage = error.localizedDescription }
     }
 
     private func scheduleSave() {
         guard !loading, isReady else { return }
         revision += 1
         saveTask?.cancel()
+        guard validationMessage == nil else { return }
         let value = configuration, capturedRevision = revision
         saveTask = Task {
             do {
                 try await Task.sleep(for: .milliseconds(400))
                 try Task.checkCancellation()
                 try await disk.save(value)
-                if capturedRevision == revision { savedRevision = capturedRevision; errorMessage = nil }
+                didSave(capturedRevision)
             } catch is CancellationError { } catch {
-                errorMessage = "保存失败，草稿仍在内存中：\(error.localizedDescription)"
+                guard capturedRevision == revision else { return }
+                report(.save, message: "保存失败，草稿仍在内存中：\(error.localizedDescription)")
             }
         }
     }
 
     func flush() async -> Bool {
         saveTask?.cancel()
+        guard isReady, validationMessage == nil else { return false }
+        let capturedRevision = revision
         do {
-            let capturedRevision = revision
             try await disk.save(configuration)
-            if capturedRevision == revision { savedRevision = capturedRevision; errorMessage = nil }
-            return true
+            didSave(capturedRevision)
+            return capturedRevision == revision
+        } catch {
+            if capturedRevision == revision { report(.save, message: "保存失败：\(error.localizedDescription)") }
+            return false
         }
-        catch { errorMessage = "保存失败：\(error.localizedDescription)"; return false }
     }
 
     func restoreBackup() async {
+        saveTask?.cancel()
         do {
             let recovered = try await disk.latestBackup()
             try await disk.save(recovered)
             loading = true; configuration = recovered; loading = false
-            isReady = true; revision += 1; savedRevision = revision; errorMessage = nil
-        } catch { errorMessage = error.localizedDescription }
+            isReady = true; revision += 1; savedRevision = revision; clearIssues()
+        } catch {
+            report(.recovery, message: error.localizedDescription)
+            if isReady, revision != savedRevision { scheduleSave() }
+        }
     }
 
     func readImport(_ url: URL) async throws -> AppConfiguration {
@@ -121,11 +171,15 @@ final class ConfigurationStore {
         do {
             try await disk.save(config)
             loading = true; configuration = config; loading = false
-            isReady = true; revision += 1; savedRevision = revision; errorMessage = nil
-        } catch { errorMessage = "导入失败，现有配置保留：\(error.localizedDescription)" }
+            isReady = true; revision += 1; savedRevision = revision; clearIssues()
+        } catch {
+            report(.importFile, message: "导入失败，现有配置保留：\(error.localizedDescription)")
+            if isReady, revision != savedRevision { scheduleSave() }
+        }
     }
 
     func export(to url: URL) async {
+        guard isReady else { return }
         let value = configuration
         do {
             try value.validate()
@@ -133,6 +187,7 @@ final class ConfigurationStore {
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 try encoder.encode(value).write(to: url, options: .atomic)
             }.value
-        } catch { errorMessage = error.localizedDescription }
+            if operationIssue?.operation == .exportFile { operationIssue = nil }
+        } catch { report(.exportFile, message: error.localizedDescription) }
     }
 }

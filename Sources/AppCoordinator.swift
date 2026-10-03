@@ -498,7 +498,7 @@ final class AppCoordinator: NSObject {
                 alert.informativeText = "导入 \(config.profiles.count) 个应用、\(config.profiles.reduce(0) { $0 + $1.buttons.count }) 个按钮。替换前会备份现有配置。"
                 alert.addButton(withTitle: "替换并备份"); alert.addButton(withTitle: "取消")
                 if alert.runModal() == .alertFirstButtonReturn { await store.replace(with: config) }
-            } catch { store.errorMessage = error.localizedDescription }
+            } catch { store.report(.importFile, message: error.localizedDescription) }
         }
     }
     @objc func exportConfiguration() {

@@ -34,6 +34,171 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(reopened === first)
         XCTAssertTrue(reopened.isVisible)
     }
+    @MainActor
+    func testNativeEditingMenuSelectionUndoAndSnippetIsolation() async throws {
+        try requireVisibleUITests()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        let first = Snippet(title: "首条标题", text: "首条正文")
+        let second = Snippet(title: "第二标题", text: "第二正文")
+        store.configuration.profiles = [AppProfile(
+            application: ApplicationIdentity(bundleIdentifier: "test.native", fallbackBundlePath: nil),
+            displayName: "Native", buttons: [first, second])]
+        let profile = Binding(get: { store.configuration.profiles[0] }, set: { store.configuration.profiles[0] = $0 })
+        let root = NSHostingView(rootView: ProfileEditor(profile: profile,
+            session: .constant(SnippetEditorSession(selectedID: first.id)), editorWidth: 280))
+        let window = NSWindow(contentRect: CGRect(x: 100, y: 100, width: 759, height: 620),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let previousMenu = NSApp.mainMenu
+        let previousPolicy = NSApp.activationPolicy()
+        defer { window.close(); NSApp.mainMenu = previousMenu; NSApp.setActivationPolicy(previousPolicy) }
+        window.isReleasedWhenClosed = false
+        window.contentView = root
+        NSApp.setActivationPolicy(.regular)
+        NSApp.mainMenu = makeApplicationMenu()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        root.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func key(_ character: String, shift: Bool = false) throws -> Bool {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: shift ? [.command, .shift] : .command, timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: shift ? character.uppercased() : character,
+                charactersIgnoringModifiers: shift ? character.uppercased() : character, isARepeat: false, keyCode: character == "a" ? 0 : 6))
+            return NSApp.mainMenu?.performKeyEquivalent(with: event) == true
+        }
+        let editor = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextView }.first { $0.string == first.text })
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        XCTAssertTrue(try key("a"))
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: (first.text as NSString).length))
+        editor.insertText("修改后的正文", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(store.configuration.profiles[0].buttons[0].text, "修改后的正文")
+        _ = try key("z")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(editor.string, first.text)
+        XCTAssertTrue(try key("z", shift: true))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(editor.string, "修改后的正文")
+        root.rootView = ProfileEditor(profile: profile,
+            session: .constant(SnippetEditorSession(selectedID: second.id)), editorWidth: 280)
+        root.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        let secondEditor = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextView }.first { $0.string == second.text })
+        XCTAssertTrue(window.makeFirstResponder(secondEditor))
+        _ = try key("z")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(store.configuration.profiles[0].buttons[0].text, "修改后的正文")
+        XCTAssertEqual(store.configuration.profiles[0].buttons[1].text, second.text)
+        let secondTitle = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextField }.first { $0.stringValue == second.title })
+        XCTAssertTrue(window.makeFirstResponder(secondTitle))
+        let titleEditor = try XCTUnwrap(secondTitle.currentEditor() as? NSTextView)
+        titleEditor.insertText("修改第二标题", replacementRange: NSRange(location: 0, length: (second.title as NSString).length))
+        try await Task.sleep(for: .milliseconds(50))
+        root.rootView = ProfileEditor(profile: profile,
+            session: .constant(SnippetEditorSession(selectedID: first.id)), editorWidth: 280)
+        root.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        let firstTitle = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextField }.first { $0.stringValue == first.title })
+        XCTAssertTrue(window.makeFirstResponder(firstTitle))
+        _ = try key("z")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(store.configuration.profiles[0].buttons[0].title, first.title)
+        XCTAssertEqual(store.configuration.profiles[0].buttons[1].title, "修改第二标题")
+        let saved = await store.flush()
+        XCTAssertTrue(saved)
+    }
+
+    @MainActor
+    func testNativeTitleAndBodyClipboardCommandsInBothActivationPolicies() async throws {
+        try requireVisibleUITests()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        let snippet = Snippet(title: "快捷键标题", text: "快捷键正文\n第二行")
+        store.configuration.profiles = [AppProfile(
+            application: ApplicationIdentity(bundleIdentifier: "test.clipboard", fallbackBundlePath: nil),
+            displayName: "Native", buttons: [snippet])]
+        let coordinator = AppCoordinator(authorization: AuthorizationEnvironment(), store: store)
+        let previousMenu = NSApp.mainMenu
+        let previousPolicy = NSApp.activationPolicy()
+        let pasteboard = NSPasteboard.general
+        let originalClipboard = (pasteboard.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+        }
+        var ownedClipboardRevision = pasteboard.changeCount
+        defer {
+            if pasteboard.changeCount == ownedClipboardRevision {
+                pasteboard.clearContents()
+                let restored = originalClipboard.map { representations in
+                    let item = NSPasteboardItem()
+                    for (type, data) in representations { item.setData(data, forType: type) }
+                    return item
+                }
+                if !restored.isEmpty { pasteboard.writeObjects(restored) }
+            }
+            NSApp.windows.first { $0.title == "PhrasePerch" }?.close()
+            coordinator.stop(); NSApp.mainMenu = previousMenu; NSApp.setActivationPolicy(previousPolicy)
+        }
+        NSApp.mainMenu = makeApplicationMenu()
+        coordinator.openSettings()
+        let window = try XCTUnwrap(NSApp.windows.first { $0.title == "PhrasePerch" })
+        let root = try XCTUnwrap(window.contentView)
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func focus(_ string: String) throws -> NSTextView {
+            if let view = descendants(root).compactMap({ $0 as? NSTextView }).first(where: { $0.string == string }) {
+                XCTAssertTrue(window.makeFirstResponder(view)); return view
+            }
+            let field = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextField }.first { $0.stringValue == string })
+            XCTAssertTrue(window.makeFirstResponder(field))
+            return try XCTUnwrap(field.currentEditor() as? NSTextView)
+        }
+        func key(_ character: String, shift: Bool = false) throws {
+            let codes: [String: UInt16] = ["a": 0, "c": 8, "x": 7, "v": 9, "z": 6]
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: shift ? [.command, .shift] : .command, timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: shift ? character.uppercased() : character,
+                charactersIgnoringModifiers: shift ? character.uppercased() : character, isARepeat: false, keyCode: codes[character]!))
+            XCTAssertTrue(NSApp.mainMenu?.performKeyEquivalent(with: event) == true)
+        }
+        for policy in [NSApplication.ActivationPolicy.regular, .accessory] {
+            NSApp.setActivationPolicy(policy)
+            NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
+            root.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+            for original in [snippet.title, snippet.text] {
+                let editor = try focus(original)
+                try key("a")
+                XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: (original as NSString).length))
+                try key("c"); ownedClipboardRevision = pasteboard.changeCount
+                XCTAssertEqual(pasteboard.string(forType: .string), original)
+                try key("x"); ownedClipboardRevision = pasteboard.changeCount
+                try await Task.sleep(for: .milliseconds(50))
+                XCTAssertEqual(editor.string, "")
+                XCTAssertEqual(store.saveStatus, "待补全")
+                XCTAssertNil(store.issue)
+                try key("v")
+                try await Task.sleep(for: .milliseconds(50))
+                XCTAssertEqual(editor.string, original)
+
+            }
+        }
+        let editor = try focus(snippet.text)
+        try key("a")
+        editor.setMarkedText("zhong", selectedRange: NSRange(location: 5, length: 0), replacementRange: editor.selectedRange())
+        XCTAssertTrue(editor.hasMarkedText())
+        editor.insertText("中文输入\n第二行", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertEqual(store.configuration.profiles[0].buttons[0].text, "中文输入\n第二行")
+        let saved = await store.flush()
+        XCTAssertTrue(saved)
+    }
+
     func testEditorColumnsAndRingFitEverySupportedCount() {
         for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
                      CGSize(width: 1280, height: 800)] {
@@ -204,7 +369,8 @@ final class CoreTests: XCTestCase {
         store.configuration.profiles = [profile]
         saved = await store.flush()
         XCTAssertFalse(saved)
-        XCTAssertEqual(store.saveStatus, "保存失败")
+        XCTAssertEqual(store.saveStatus, "待补全")
+        XCTAssertNil(store.issue)
         XCTAssertEqual(store.configuration.profiles[0].buttons[0].text, "修改后的正文")
         profile.buttons[0].title = "修复标题"
         store.configuration.profiles = [profile]
@@ -214,6 +380,185 @@ final class CoreTests: XCTestCase {
         await store.restoreBackup()
         XCTAssertEqual(store.configuration.profiles[0].buttons[0].title, "第一条")
         XCTAssertEqual(store.saveStatus, "已保存")
+    }
+
+    @MainActor
+    func testConfigurationIssuesAndDraftHintsRenderWithoutTopBanner() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        store.configuration.profiles = [AppProfile(
+            application: ApplicationIdentity(bundleIdentifier: "preview.validation", fallbackBundlePath: nil),
+            displayName: "编辑示例", buttons: [Snippet(title: "", text: "")])]
+        let coordinator = AppCoordinator(authorization: AuthorizationEnvironment(), store: store)
+        defer { coordinator.stop() }
+        for operation in [ConfigurationIssue.Operation.save, .load, .importFile, .exportFile, .recovery] {
+            let isolated = ConfigurationStore(directory: directory.appendingPathComponent(operation.rawValue))
+            for _ in 0..<100 where !isolated.isReady { try await Task.sleep(for: .milliseconds(10)) }
+            isolated.configuration = store.configuration
+            isolated.report(operation, message: "测试文件操作详情：请检查配置并重试。")
+            let issueCoordinator = AppCoordinator(authorization: AuthorizationEnvironment(), store: isolated)
+            for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+                         CGSize(width: 1280, height: 800)] {
+                for page in [MainPage.home, .settings] {
+                    let root = NSHostingView(rootView: SettingsView(coordinator: issueCoordinator, initialPage: page))
+                    let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled],
+                                          backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    window.appearance = NSAppearance(named: .darkAqua)
+                    window.contentView = root
+                    root.layoutSubtreeIfNeeded()
+                    try await Task.sleep(for: .milliseconds(50))
+                    try savePreview(root, name: "issue-\(operation)-\(page)-\(Int(size.width)).png")
+                    if page == .settings {
+                        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+                        let scroll = try XCTUnwrap(descendants(root).compactMap { $0 as? NSScrollView }.first)
+                        let document = try XCTUnwrap(scroll.documentView)
+                        document.scroll(NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+                        try await Task.sleep(for: .milliseconds(50))
+                        try savePreview(root, name: "issue-\(operation)-configuration-\(Int(size.width)).png")
+                    }
+                    XCTAssertEqual(root.bounds.size, size)
+                    window.close()
+                }
+            }
+            issueCoordinator.stop()
+        }
+        let unavailable = directory.appendingPathComponent("unavailable")
+        try FileManager.default.createDirectory(at: unavailable, withIntermediateDirectories: true)
+        try Data("damaged".utf8).write(to: unavailable.appendingPathComponent("configuration.json"))
+        let failedStore = ConfigurationStore(directory: unavailable)
+        for _ in 0..<100 where failedStore.issue == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let failedCoordinator = AppCoordinator(authorization: AuthorizationEnvironment(), store: failedStore)
+        defer { failedCoordinator.stop() }
+        let root = NSHostingView(rootView: SettingsView(coordinator: failedCoordinator))
+        root.frame = CGRect(x: 0, y: 0, width: 960, height: 620)
+        root.appearance = NSAppearance(named: .darkAqua)
+        root.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        try savePreview(root, name: "issue-load-unavailable.png")
+    }
+
+    @MainActor
+    func testIncompleteDraftKeepsDiskContentsAndResumesAutoSave() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        store.configuration.profiles = [AppProfile(
+            application: ApplicationIdentity(bundleIdentifier: "test.draft", fallbackBundlePath: nil),
+            displayName: "Draft", buttons: [Snippet(title: "标题", text: "原正文")])]
+        let initiallySaved = await store.flush()
+        XCTAssertTrue(initiallySaved)
+        let file = directory.appendingPathComponent("configuration.json")
+        let original = try Data(contentsOf: file)
+        for invalid in [Snippet(title: "", text: "新正文"), Snippet(title: "标题", text: ""),
+                        Snippet(title: "标题", text: String(repeating: "中", count: 22000)),
+                        Snippet(title: "标题", text: "bad\u{0}")] {
+            store.configuration.profiles[0].buttons[0].title = invalid.title
+            store.configuration.profiles[0].buttons[0].text = invalid.text
+            try await Task.sleep(for: .milliseconds(500))
+            XCTAssertEqual(store.saveStatus, "待补全")
+            XCTAssertNil(store.issue)
+            XCTAssertEqual(try Data(contentsOf: file), original)
+            let saved = await store.flush()
+            XCTAssertFalse(saved)
+            XCTAssertNil(store.issue)
+        }
+        store.configuration.profiles[0].buttons[0].title = "补齐标题"
+        store.configuration.profiles[0].buttons[0].text = "新的完整正文"
+        for _ in 0..<100 where store.savedRevision != store.revision {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(store.saveStatus, "已保存")
+        let disk = ConfigurationDisk(directory: directory)
+        let persisted = try await disk.load()
+        XCTAssertEqual(persisted.profiles[0].buttons[0].text, "新的完整正文")
+    }
+
+    @MainActor
+    func testDiskSaveFailureKeepsDraftAndCanRetry() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        try Data("block directory".utf8).write(to: directory)
+        store.configuration.profiles = [AppProfile(
+            application: ApplicationIdentity(bundleIdentifier: "test.disk", fallbackBundlePath: nil),
+            displayName: "Disk", buttons: [Snippet(title: "标题", text: "内存草稿")])]
+        let failed = await store.flush()
+        XCTAssertFalse(failed)
+        XCTAssertEqual(store.issue?.operation, .save)
+        XCTAssertEqual(store.saveStatus, "保存失败")
+        XCTAssertEqual(store.configuration.profiles[0].buttons[0].text, "内存草稿")
+        store.report(.exportFile, message: "导出目标不可用")
+        XCTAssertEqual(store.saveStatus, "保存失败")
+        XCTAssertEqual(store.issue?.operation, .save)
+        try FileManager.default.removeItem(at: directory)
+        let retried = await store.flush()
+        XCTAssertTrue(retried)
+        XCTAssertNil(store.saveIssue)
+        XCTAssertEqual(store.issue?.operation, .exportFile)
+        XCTAssertEqual(store.saveStatus, "已保存")
+    }
+
+    @MainActor
+    func testFailedLoadCannotOverwriteOriginalAndCanRetryOrRecoverBackup() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("configuration.json")
+        let damaged = Data("damaged configuration".utf8)
+        try damaged.write(to: file)
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where store.issue == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(store.isReady)
+        XCTAssertEqual(store.issue?.operation, .load)
+        XCTAssertEqual(store.saveStatus, "读取失败")
+        let flushed = await store.flush()
+        XCTAssertFalse(flushed)
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+        let valid = try JSONEncoder().encode(AppConfiguration())
+        try valid.write(to: file)
+        await store.retryLoad()
+        XCTAssertTrue(store.isReady)
+        XCTAssertNil(store.issue)
+
+        try damaged.write(to: file)
+        try valid.write(to: directory.appendingPathComponent("backup-test.json"))
+        let recoveryStore = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where recoveryStore.issue == nil { try await Task.sleep(for: .milliseconds(10)) }
+        await recoveryStore.restoreBackup()
+        XCTAssertTrue(recoveryStore.isReady)
+        XCTAssertNil(recoveryStore.issue)
+        XCTAssertEqual(recoveryStore.saveStatus, "已保存")
+        let disk = ConfigurationDisk(directory: directory)
+        let recovered = try await disk.load()
+        XCTAssertEqual(recovered.schemaVersion, 2)
+        let retained = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("damaged-") }
+        XCTAssertEqual(retained.count, 1)
+        XCTAssertEqual(try Data(contentsOf: retained[0]), damaged)
+    }
+
+    @MainActor
+    func testImportAndExportFailuresDoNotMisreportPersistenceStatus() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        let saved = await store.flush()
+        XCTAssertTrue(saved)
+        await store.replace(with: AppConfiguration(schemaVersion: 999))
+        XCTAssertEqual(store.issue?.operation, .importFile)
+        XCTAssertEqual(store.configuration.schemaVersion, 2)
+        XCTAssertEqual(store.saveStatus, "已保存")
+        await store.export(to: directory.appendingPathComponent("missing/export.json"))
+        XCTAssertEqual(store.issue?.operation, .exportFile)
+        XCTAssertEqual(store.saveStatus, "已保存")
+        await store.export(to: directory.appendingPathComponent("export.json"))
+        XCTAssertNil(store.issue)
     }
 
     func testPerApplicationEnableAndExclusiveTriggerChoice() throws {

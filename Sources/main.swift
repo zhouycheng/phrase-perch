@@ -1,6 +1,36 @@
 import AppKit
 import Darwin
 
+@MainActor
+func makeApplicationMenu() -> NSMenu {
+    let menu = NSMenu()
+    let applicationMenu = NSMenu(title: "PhrasePerch")
+    let applicationItem = NSMenuItem()
+    applicationItem.submenu = applicationMenu
+    menu.addItem(applicationItem)
+    let quit = NSMenuItem(title: "退出 PhrasePerch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    quit.target = NSApp
+    applicationMenu.addItem(quit)
+
+    let editMenu = NSMenu(title: "编辑")
+    let editItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
+    editItem.submenu = editMenu
+    menu.addItem(editItem)
+    for (title, action, key, shifted) in [
+        ("撤销", "undo:", "z", false), ("重做", "redo:", "z", true),
+        ("剪切", "cut:", "x", false), ("复制", "copy:", "c", false),
+        ("粘贴", "paste:", "v", false), ("全选", "selectAll:", "a", false)
+    ] {
+        if key == "x" { editMenu.addItem(.separator()) }
+        let item = NSMenuItem(title: title, action: NSSelectorFromString(action),
+                              keyEquivalent: shifted ? key.uppercased() : key)
+        item.keyEquivalentModifierMask = .command
+        // A nil target routes each command to the focused native editor.
+        editMenu.addItem(item)
+    }
+    return menu
+}
+
 func acquireInstanceLock(at url: URL) throws -> Int32? {
     let descriptor = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
     guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
@@ -16,11 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: AppCoordinator?
     private var instanceLock: Int32 = -1
     private var reopenObserver: NSObjectProtocol?
-    private let reopenNotification = Notification.Name("local.FloatingInputBar.reopenSettings")
+    private let reopenNotification = Notification.Name("\(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar").reopenSettings")
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard NSClassFromString("XCTestCase") == nil else { return }
         do {
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("local.FloatingInputBar.instance.lock")
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar").instance.lock")
             guard let descriptor = try acquireInstanceLock(at: url) else {
                 DistributedNotificationCenter.default().postNotificationName(reopenNotification,
                     object: nil, userInfo: nil, deliverImmediately: true)
@@ -36,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        NSApp.mainMenu = makeApplicationMenu()
         coordinator = AppCoordinator(); coordinator?.start()
         reopenObserver = DistributedNotificationCenter.default().addObserver(forName: reopenNotification,
             object: nil, queue: .main) { [weak self] _ in

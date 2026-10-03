@@ -230,12 +230,22 @@ struct InputFailure: LocalizedError, Sendable {
 }
 
 func validateSnippet(_ snippet: Snippet) throws {
-    guard !snippet.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw InputFailure("按钮名称不能为空") }
-    guard !snippet.text.isEmpty else { throw InputFailure("正文不能为空") }
-    guard snippet.text.utf8.count <= 64 * 1024 else { throw InputFailure("正文超过 64 KiB") }
-    guard !snippet.text.unicodeScalars.contains(where: { scalar in
+    if let message = snippetTitleIssue(snippet.title) ?? snippetTextIssue(snippet.text) {
+        throw InputFailure(message)
+    }
+}
+
+func snippetTitleIssue(_ title: String) -> String? {
+    title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "请填写文案标题" : nil
+}
+
+func snippetTextIssue(_ text: String) -> String? {
+    if text.isEmpty { return "请填写文案正文" }
+    if text.utf8.count > 64 * 1024 { return "正文超过 64 KiB，请缩短内容" }
+    if text.unicodeScalars.contains(where: { scalar in
         (scalar.value < 32 && ![9, 10, 13].contains(scalar.value)) || (127...159).contains(scalar.value)
-    }) else { throw InputFailure("正文含不支持的控制字符") }
+    }) { return "正文含不支持的控制字符" }
+    return nil
 }
 
 func verifyInsertion(before: String, range: NSRange, text: String, after: String) -> InsertionResult? {

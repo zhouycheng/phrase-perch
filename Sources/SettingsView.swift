@@ -13,6 +13,8 @@ enum MainPage: CaseIterable {
 }
 
 private enum EditorStyle {
+    static let headerHeight: CGFloat = 56
+    static let contentInset: CGFloat = 22
     static let background = Color(red: 23 / 255, green: 23 / 255, blue: 23 / 255)
     static let selectedRow = Color(red: 61 / 255, green: 61 / 255, blue: 61 / 255)
     static let separator = Color.white.opacity(0.13)
@@ -182,26 +184,13 @@ struct SettingsView: View {
             NavigationRail(page: $page)
             EditorStyle.separator.frame(width: 1)
             VStack(spacing: 0) {
-                if let message = coordinator.store.errorMessage {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
-                        HStack {
-                            Button("恢复最近备份") { recoveryAlert = true }
-                            if coordinator.store.isReady {
-                                Button("重试保存") { Task { _ = await coordinator.store.flush() } }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12).background(Color.orange.opacity(0.08))
-                }
                 Group {
                     switch page {
                     case .home:
                         HomePage(coordinator: coordinator, selectedProfile: $selectedProfile,
-                                 sessions: $sessions, requestDelete: { deleteProfile = $0 })
-                    case .settings: SettingsPage(coordinator: coordinator)
+                                 sessions: $sessions, requestDelete: { deleteProfile = $0 },
+                                 openConfiguration: { page = .settings })
+                    case .settings: SettingsPage(coordinator: coordinator, requestRecovery: { recoveryAlert = true })
                     case .about: AboutPage()
                     }
                 }
@@ -247,6 +236,7 @@ private struct HomePage: View {
     @Binding var selectedProfile: UUID?
     @Binding var sessions: [UUID: SnippetEditorSession]
     let requestDelete: (UUID) -> Void
+    let openConfiguration: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -256,7 +246,11 @@ private struct HomePage: View {
                                 requestDelete: requestDelete)
                     .frame(width: columns.sidebar)
                 EditorStyle.separator.frame(width: 1)
-                if let profile = coordinator.store.configuration.profiles.first(where: { $0.id == selectedProfile }) {
+                if !coordinator.store.isReady {
+                    EditorEmptyState(title: coordinator.store.issue == nil ? "正在加载配置…" : "配置暂未加载，查看详情",
+                                     symbol: "externaldrive",
+                                     action: coordinator.store.issue == nil ? nil : openConfiguration)
+                } else if let profile = coordinator.store.configuration.profiles.first(where: { $0.id == selectedProfile }) {
                     let id = profile.id
                     ProfileEditor(profile: Binding(
                         get: { coordinator.store.configuration.profiles.first(where: { $0.id == id }) ?? profile },
@@ -268,7 +262,10 @@ private struct HomePage: View {
                         session: Binding(get: { sessions[id] ?? SnippetEditorSession() },
                                          set: { sessions[id] = $0 }),
                         editorWidth: columns.editor,
-                        saveStatus: coordinator.store.saveStatus)
+                        saveStatus: coordinator.store.saveStatus,
+                        configurationIssue: coordinator.store.saveIssue,
+                        retrySave: { Task { _ = await coordinator.store.flush() } },
+                        openConfiguration: openConfiguration)
                         .id(id).disabled(!coordinator.store.isReady)
                 } else {
                     EditorEmptyState(title: "添加应用", symbol: "app.badge", action: coordinator.chooseApplications)
@@ -285,8 +282,9 @@ private struct ApplicationList: View {
 
     var body: some View {
         @Bindable var store = coordinator.store
-        VStack(alignment: .leading, spacing: 18) {
-            Text("应用列表").font(.system(size: 18, weight: .medium)).padding(.top, 10)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("应用列表").font(.system(size: 18, weight: .medium))
+                .frame(height: EditorStyle.headerHeight)
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach($store.configuration.profiles) { $profile in
@@ -322,6 +320,7 @@ private struct ApplicationList: View {
                 }
             }
             .disabled(!coordinator.store.isReady)
+            .padding(.top, 8)
             VStack(alignment: .leading, spacing: 16) {
                 Menu {
                     Button("选择 .app 文件…", action: coordinator.chooseApplications)
@@ -335,12 +334,14 @@ private struct ApplicationList: View {
                         }
                     }
                 } label: { Label("添加应用", systemImage: "plus") }
-                    .menuStyle(.borderlessButton).disabled(!coordinator.store.isReady)
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                    .disabled(!coordinator.store.isReady)
 
             }
             .padding(.bottom, 8)
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
     }
 }
 
@@ -363,6 +364,10 @@ struct ProfileEditor: View {
     @Binding var session: SnippetEditorSession
     let editorWidth: CGFloat
     var saveStatus = "已保存"
+    var configurationIssue: ConfigurationIssue?
+    var retrySave: (() -> Void)?
+    var openConfiguration: (() -> Void)?
+    @State private var showSaveIssue = false
     @State private var deletion = SnippetDeletion()
 
     private var ids: [UUID] { profile.buttons.map(\.id) }
@@ -386,7 +391,8 @@ struct ProfileEditor: View {
                     Button(action: addSnippet) { Label("添加文案", systemImage: "plus") }
                         .buttonStyle(.plain).font(.system(size: 12))
                 }
-                .foregroundStyle(.secondary).padding(.horizontal, 22).frame(height: 56)
+                .foregroundStyle(.secondary).padding(.horizontal, EditorStyle.contentInset)
+                .frame(height: EditorStyle.headerHeight)
                 GeometryReader { geometry in
                     let snippets = visibleSnippets
                     let layout = EditorRingLayout(size: geometry.size, count: snippets.count)
@@ -449,6 +455,9 @@ struct ProfileEditor: View {
                                 .textFieldStyle(.plain).font(.system(size: 18, weight: .medium))
                                 .lineLimit(1...3)
                                 .accessibilityLabel("文案标题")
+                            if let message = snippetTitleIssue(snippet.title) {
+                                Text(message).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
                         }
                         Color.white.opacity(0.08).frame(height: 1)
                         VStack(alignment: .leading, spacing: 8) {
@@ -461,10 +470,30 @@ struct ProfileEditor: View {
                                 .padding(.horizontal, -5)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .accessibilityLabel("文案正文")
+                            if let message = snippetTextIssue(snippet.text) {
+                                Text(message).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         HStack(alignment: .firstTextBaseline) {
-                            Text(saveStatus)
+                            if saveStatus == "保存失败", let configurationIssue {
+                                Button(saveStatus) { showSaveIssue = true }
+                                    .buttonStyle(.plain).help("查看保存详情")
+                                    .popover(isPresented: $showSaveIssue) {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            Text(configurationIssue.message).textSelection(.enabled)
+                                            HStack {
+                                                if let retrySave { Button("重试保存", action: retrySave) }
+                                                if let openConfiguration {
+                                                    Button("配置设置") { showSaveIssue = false; openConfiguration() }
+                                                }
+                                            }
+                                        }
+                                        .font(.callout).padding(16).frame(width: 300)
+                                    }
+                            } else {
+                                Text(saveStatus)
+                            }
                             Spacer(minLength: 4)
                             Text("\(snippet.text.utf8.count) B / 64 KiB").monospacedDigit()
                             Button(role: .destructive) { deletion.request(snippet.id) } label: {
@@ -476,7 +505,8 @@ struct ProfileEditor: View {
                         }
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
-                    .padding(22)
+                    .padding(EditorStyle.contentInset)
+                    .id(snippet.id)
                 } else {
                     EditorEmptyState(title: "选择文案开始编辑", symbol: "text.alignleft")
                 }
@@ -486,6 +516,10 @@ struct ProfileEditor: View {
         }
         .onAppear { session.reconcile(ids) }
         .onChange(of: ids) { _, updated in session.reconcile(updated) }
+        .onChange(of: session.selectedID) { _, _ in showSaveIssue = false }
+        .onChange(of: saveStatus) { _, status in
+            if status != "保存失败" { showSaveIssue = false }
+        }
         .alert("删除这条文案？", isPresented: Binding(get: { deletion.id != nil },
             set: { if !$0 { deletion.cancel() } }), presenting: deletion.id) { id in
                 Button("取消", role: .cancel) { deletion.cancel() }
@@ -551,6 +585,7 @@ private struct EditorSnippetButton: View {
 
 private struct SettingsPage: View {
     @Bindable var coordinator: AppCoordinator
+    let requestRecovery: () -> Void
 
     var body: some View {
         ScrollView {
@@ -636,11 +671,31 @@ private struct SettingsPage: View {
                 }
 
                 SurfaceCard(title: "配置", symbol: "externaldrive", badge: "按需使用") {
-                    HStack(spacing: 10) {
-                        Button("导入配置…", action: coordinator.importConfiguration)
-                        Button("导出配置…", action: coordinator.exportConfiguration)
-                        Spacer()
-                        settingsExplanation("配置保存在本机")
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 10) {
+                            Button("导入配置…", action: coordinator.importConfiguration)
+                            Button("导出配置…", action: coordinator.exportConfiguration)
+                                .disabled(!coordinator.store.isReady)
+                            Spacer()
+                            settingsExplanation("配置保存在本机")
+                        }
+                        if let issue = coordinator.store.issue {
+                            Divider()
+                            Text(issue.operation.rawValue).font(.callout.weight(.medium))
+                            Text(issue.message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                        }
+                        if let message = coordinator.store.validationMessage {
+                            settingsExplanation("待补全文案：\(message)。补齐后会自动保存。")
+                        }
+                        HStack(spacing: 10) {
+                            if !coordinator.store.isReady, coordinator.store.issue != nil {
+                                Button("重新读取") { Task { await coordinator.store.retryLoad() } }
+                            }
+                            if coordinator.store.issue?.operation == .save {
+                                Button("重试保存") { Task { _ = await coordinator.store.flush() } }
+                            }
+                            Button("恢复最近备份…", action: requestRecovery)
+                        }
                     }
                 }
             }
