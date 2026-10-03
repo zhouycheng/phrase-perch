@@ -28,22 +28,50 @@ enum ClickModifier: String, Codable, CaseIterable, Sendable {
     }
 }
 
-struct ModifierGesture: Sendable {
-    let modifier: ClickModifier
-    private(set) var valid = true
-    var dragged = false
+// One token follows a hold from the AX check through the eventual paste. Late
+// callbacks and duplicate releases cannot advance a different hold.
+struct HoldMenuSession {
+    static let modifierReleaseTimeout: Duration = .milliseconds(500)
+    enum Trigger: Equatable { case modifier, shortcut }
+    enum Phase: Equatable { case idle, checking, choosing, waitingForModifiers, inserting }
+    private(set) var id: UUID?
+    private(set) var trigger: Trigger?
+    private(set) var phase = Phase.idle
 
-    init(modifier: ClickModifier, flags: UInt) {
-        self.modifier = modifier
-        observe(flags: flags)
+    mutating func begin(_ trigger: Trigger) -> UUID? {
+        guard phase == .idle else { return nil }
+        let token = UUID()
+        id = token; self.trigger = trigger; phase = .checking
+        return token
     }
-    mutating func observe(flags: UInt) {
-        let relevant = UInt(CGEventFlags([.maskCommand, .maskShift, .maskAlternate, .maskControl]).rawValue)
-        valid = valid && flags & relevant == modifier.mask
+    func isCurrent(_ token: UUID) -> Bool { id == token && phase != .idle }
+    mutating func show(_ token: UUID) -> Bool {
+        guard isCurrent(token), phase == .checking else { return false }
+        phase = .choosing; return true
     }
-    func acceptsEditor(sameEditor: Bool, selectionLength: Int?) -> Bool {
-        valid && sameEditor && (!dragged || (selectionLength ?? 0) > 0)
+    mutating func release(_ source: Trigger, selection: UUID?) -> UUID? {
+        guard trigger == source, phase == .checking || phase == .choosing else { return nil }
+        guard phase == .choosing, selection != nil, let token = id else { cancel(); return nil }
+        phase = .waitingForModifiers
+        return token
     }
+    mutating func commit(_ token: UUID) -> Bool {
+        guard isCurrent(token), phase == .waitingForModifiers else { return false }
+        phase = .inserting; return true
+    }
+    mutating func cancel() { id = nil; trigger = nil; phase = .idle }
+}
+
+@MainActor
+func waitForModifierRelease(timeout: Duration = HoldMenuSession.modifierReleaseTimeout,
+                            released: () -> Bool, current: () -> Bool) async -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while !released() {
+        guard !Task.isCancelled, current(), clock.now < deadline else { return false }
+        do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
+    }
+    return !Task.isCancelled && current()
 }
 
 struct ApplicationIdentity: Codable, Hashable, Sendable {
@@ -76,9 +104,50 @@ struct AppProfile: Codable, Identifiable, Equatable, Sendable {
     var buttons: [Snippet] = []
 }
 
+enum MenuAnchorMode: String, Codable, CaseIterable, Sendable {
+    case mouse, caret
+    var title: String { self == .mouse ? "鼠标位置" : "输入光标位置" }
+}
+
+struct AuthorizationFlow {
+    enum Step: Equatable {
+        case authorize, restart, ready, reauthorize
+        var title: String {
+            switch self {
+            case .authorize: "授权"
+            case .restart: "重启"
+            case .ready: "已就绪"
+            case .reauthorize: "重新授权"
+            }
+        }
+    }
+    private(set) var step: Step = .authorize
+    private var previousTrusted: Bool?
+    private var restartRequired = false
+    private let afterRestart: Bool
+    init(afterRestart: Bool = false) { self.afterRestart = afterRestart }
+    mutating func refresh(accessibility: Bool, paste: Bool) {
+        if previousTrusted == false && accessibility { restartRequired = true }
+        previousTrusted = accessibility
+        if !accessibility { restartRequired = false; step = .authorize }
+        else if restartRequired { step = .restart }
+        else if paste { step = .ready }
+        else { step = afterRestart ? .reauthorize : .restart }
+    }
+}
+
 struct Preferences: Codable, Equatable, Sendable {
     var isEnabled = true
     var clickModifier = ClickModifier.option
+    var menuAnchorMode = MenuAnchorMode.mouse
+    init() { }
+    private enum CodingKeys: String, CodingKey { case isEnabled, clickModifier, menuAnchorMode }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try values.decode(Bool.self, forKey: .isEnabled)
+        clickModifier = try values.decode(ClickModifier.self, forKey: .clickModifier)
+        menuAnchorMode = try values.decodeIfPresent(MenuAnchorMode.self, forKey: .menuAnchorMode) ?? .mouse
+    }
 }
 
 struct AppEntryVisibility: Equatable {

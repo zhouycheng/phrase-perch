@@ -4,6 +4,12 @@ import Darwin
 @testable import PhrasePerch
 
 final class CoreTests: XCTestCase {
+    private func previewDirectory() throws -> URL {
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/previews", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
     @MainActor
     func testSettingsWindowIsReusedAfterRepeatedOpenAndClose() throws {
         let coordinator = AppCoordinator()
@@ -40,15 +46,11 @@ final class CoreTests: XCTestCase {
     }
     @MainActor
     func testPermissionRowPreviews() throws {
-        let states: [(String, String, Bool, String)] = [
-            ("辅助功能", "识别当前应用与可编辑输入位置", false, "waiting"),
-            ("粘贴输入", "将所选文案粘贴到目标应用", false, "paste"),
-            ("辅助功能", "识别当前应用与可编辑输入位置", true, "ready")
-        ]
-        let docs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("docs")
-        for (title, detail, isReady, filename) in states {
-            let view = NSHostingView(rootView: PermissionRow(title: title, detail: detail,
-                isReady: isReady, authorize: {}).padding(20)
+        let states: [(AuthorizationFlow.Step, String)] = [(.authorize, "waiting"), (.restart, "restart"),
+                                                          (.reauthorize, "reauthorize"), (.ready, "ready")]
+        let docs = try previewDirectory()
+        for (step, filename) in states {
+            let view = NSHostingView(rootView: PermissionRow(step: step, detail: "读取输入位置与粘贴文案", action: {}).padding(20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .background(Color(nsColor: .windowBackgroundColor)))
             view.frame = CGRect(x: 0, y: 0, width: 420, height: 80)
@@ -60,76 +62,52 @@ final class CoreTests: XCTestCase {
             try data.write(to: docs.appendingPathComponent("Authorization-\(filename).png"))
         }
     }
-    func testModifierGestureRequiresContinuousKeyAndEditableSelection() {
-        for modifier in ClickModifier.allCases {
-            var click = ModifierGesture(modifier: modifier, flags: modifier.mask)
-            XCTAssertTrue(click.acceptsEditor(sameEditor: true, selectionLength: 0))
-            XCTAssertFalse(click.acceptsEditor(sameEditor: false, selectionLength: 10))
-            var selection = click; selection.dragged = true
-            XCTAssertTrue(selection.acceptsEditor(sameEditor: true, selectionLength: 10))
-            XCTAssertFalse(selection.acceptsEditor(sameEditor: true, selectionLength: 0))
-            XCTAssertFalse(selection.acceptsEditor(sameEditor: true, selectionLength: nil))
-            selection.observe(flags: 0); selection.observe(flags: modifier.mask)
-            XCTAssertFalse(selection.acceptsEditor(sameEditor: true, selectionLength: 10), "Repressing the key cannot resurrect the gesture")
-            click.observe(flags: modifier.mask | UInt(CGEventFlags.maskControl.rawValue))
-            click.observe(flags: modifier.mask)
-            XCTAssertFalse(click.acceptsEditor(sameEditor: true, selectionLength: 0))
-            XCTAssertFalse(ModifierGesture(modifier: modifier, flags: 0).valid)
-        }
+    func testHoldQuickReleaseAndLateCheck() throws {
+        var session = HoldMenuSession()
+        let token = try XCTUnwrap(session.begin(.modifier))
+        XCTAssertNil(session.release(.modifier, selection: nil))
+        XCTAssertEqual(session.phase, .idle)
+        XCTAssertFalse(session.show(token))
+        let next = try XCTUnwrap(session.begin(.modifier))
+        XCTAssertNotEqual(token, next)
+        XCTAssertFalse(session.show(token))
+        XCTAssertTrue(session.show(next))
+    }
+    func testHoldDuplicateEventsAndExactlyOneCommit() throws {
+        var session = HoldMenuSession()
+        let token = try XCTUnwrap(session.begin(.shortcut))
+        XCTAssertNil(session.begin(.shortcut))
+        XCTAssertTrue(session.show(token))
+        XCTAssertFalse(session.show(token))
+        let selection = UUID()
+        XCTAssertNil(session.release(.modifier, selection: selection))
+        XCTAssertEqual(session.phase, .choosing)
+        XCTAssertEqual(session.release(.shortcut, selection: selection), token)
+        XCTAssertNil(session.release(.shortcut, selection: selection))
+        XCTAssertTrue(session.commit(token))
+        XCTAssertFalse(session.commit(token))
+        session.cancel()
+        XCTAssertFalse(session.commit(token))
+    }
+    func testHoldNoSelectionAndRetriggerCancelPendingPaste() throws {
+        var session = HoldMenuSession()
+        let first = try XCTUnwrap(session.begin(.modifier))
+        XCTAssertTrue(session.show(first))
+        XCTAssertNil(session.release(.modifier, selection: nil))
+        XCTAssertEqual(session.phase, .idle)
+        let second = try XCTUnwrap(session.begin(.shortcut))
+        XCTAssertTrue(session.show(second))
+        XCTAssertEqual(session.release(.shortcut, selection: UUID()), second)
+        session.cancel()
+        let third = try XCTUnwrap(session.begin(.shortcut))
+        XCTAssertFalse(session.commit(second))
+        XCTAssertTrue(session.isCurrent(third))
     }
     func testMenuClosesOnlyAfterCompleteInsertionOrDispatch() {
         for result in [InsertionResult.insertedVerified, .dispatchedUnverified] { XCTAssertTrue(result.closesMenu) }
         for result in [InsertionResult.notWritten, .unsupported, .partialVerified, .interruptedAfterDispatch, .indeterminate] {
             XCTAssertFalse(result.closesMenu)
         }
-    }
-    @MainActor
-    func testAuthorizationFileDragPayloadAndSharedPanel() throws {
-        let controller = FloatingPanelController(), original = controller.panel
-        controller.configureAuthorization(applicationURL: Bundle.main.bundleURL, frame: CGRect(x: 0, y: 0, width: 420, height: 112))
-        XCTAssertEqual(controller.content, .authorization)
-        XCTAssertFalse(controller.panel.canBecomeKey)
-        let root = try XCTUnwrap(controller.panel.contentView)
-        let dragRow = try XCTUnwrap(root.subviews.compactMap { $0 as? ApplicationDragView }.first)
-        XCTAssertGreaterThan(dragRow.frame.width, 100)
-        let blankArea = CGPoint(x: dragRow.frame.maxX - 2, y: dragRow.frame.midY)
-        XCTAssertTrue(dragRow.hitTest(blankArea) === dragRow)
-        var accepted: [Bool] = []
-        dragRow.onDragEnded = { accepted.append($0) }
-        dragRow.finishDrag(operation: [])
-        dragRow.finishDrag(operation: .copy)
-        XCTAssertEqual(accepted, [false, true])
-        let item = dragRow.draggingItem()
-        XCTAssertEqual(item.item as? NSURL, Bundle.main.bundleURL as NSURL)
-        let generalRevision = NSPasteboard.general.changeCount
-        let board = NSPasteboard(name: NSPasteboard.Name("PhrasePerch-drag-test-\(UUID().uuidString)"))
-        defer { board.releaseGlobally() }
-        XCTAssertTrue(board.writeObjects([try XCTUnwrap(item.item as? NSURL)]))
-        XCTAssertEqual(board.readObjects(forClasses: [NSURL.self], options: nil)?.first as? NSURL, Bundle.main.bundleURL as NSURL)
-        XCTAssertEqual(NSPasteboard.general.changeCount, generalRevision)
-        controller.updateAuthorization(status: .needsAccessibility, feedback: "拖入列表后开启开关")
-        root.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(root.bitmapImageRepForCachingDisplay(in: root.bounds))
-        root.cacheDisplay(in: root.bounds, to: bitmap)
-        let docs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("docs")
-        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: docs.appendingPathComponent("Authorization-guide-preview.png"))
-        let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),
-                                 displayName: "Preview", buttons: [Snippet(title: "继续", text: "正文")])
-        controller.configure(profile: profile, at: CGPoint(x: 500, y: 400), visible: CGRect(x: 0, y: 0, width: 1000, height: 800))
-        XCTAssertTrue(controller.panel === original)
-        XCTAssertEqual(controller.content, .snippets)
-        XCTAssertFalse(controller.panel.contentView?.subviews.contains { $0 is ApplicationDragView } ?? true)
-    }
-    func testAuthorizationGuidePlacementOnNegativeCoordinateScreens() {
-        let visible = CGRect(x: -1440, y: -200, width: 1440, height: 900)
-        for settings in [CGRect(x: -900, y: 100, width: 600, height: 500), CGRect(x: -600, y: 0, width: 600, height: 600)] {
-            XCTAssertTrue(visible.contains(authorizationGuideFrame(settings: settings, visible: visible)))
-        }
-        XCTAssertTrue(visible.contains(authorizationGuideFrame(settings: nil, visible: visible)))
-        let settings = CGRect(x: -900, y: 100, width: 600, height: 500)
-        XCTAssertLessThan(authorizationGuideFrame(settings: settings, visible: visible).maxY, settings.minY)
-        let bottom = CGRect(x: -900, y: -180, width: 600, height: 500)
-        XCTAssertEqual(authorizationGuideFrame(settings: bottom, visible: visible).minY, bottom.minY + 12)
     }
     func testCurrentPreferencesRequireExplicitModifier() throws {
         let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test", fallbackBundlePath: nil),
@@ -171,29 +149,33 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(isCommandQuitShortcut(charactersIgnoringModifiers: "w", modifiers: .command))
         XCTAssertFalse(isCommandQuitShortcut(charactersIgnoringModifiers: "q", modifiers: []))
     }
-    func testPillGeometryAndPagination() {
-        let visible = CGRect(x: -1440, y: -200, width: 1440, height: 900)
-        for count in 1...6 {
-            for point in [CGPoint(x: -1, y: -199), CGPoint(x: -1439, y: 699), CGPoint(x: -700, y: 100)] {
-                let layout = PillLayout(anchor: point, visible: visible, count: count)
-                XCTAssertTrue(visible.contains(layout.frame))
-                for index in 0..<count {
-                    XCTAssertTrue(layout.bar.contains(layout.itemRect(index: index)))
+    func testRadialGeometryAllItemsAndScreenEdges() throws {
+        for visible in [CGRect(x: 0, y: 0, width: 1440, height: 900),
+                        CGRect(x: -1440, y: -200, width: 1440, height: 900)] {
+            let points = [CGPoint(x: visible.midX, y: visible.midY),
+                          CGPoint(x: visible.minX + 1, y: visible.minY + 1),
+                          CGPoint(x: visible.maxX - 1, y: visible.minY + 1),
+                          CGPoint(x: visible.minX + 1, y: visible.maxY - 1),
+                          CGPoint(x: visible.maxX - 1, y: visible.maxY - 1)]
+            for count in [1, 3, 6, 12, 24] {
+                for point in points {
+                    let layout = try XCTUnwrap(RadialLayout(anchor: point, visible: visible, count: count))
+                    XCTAssertEqual(layout.items.count, count)
+                    XCTAssertEqual(layout.anchor, point)
+                    XCTAssertTrue(visible.contains(layout.frame))
+                    XCTAssertNil(layout.selectedIndex(at: point))
+                    for (index, rect) in layout.items.enumerated() {
+                        XCTAssertTrue(visible.contains(rect))
+                        XCTAssertEqual(layout.selectedIndex(at: CGPoint(x: rect.midX, y: rect.midY)), index)
+                        XCTAssertNil(layout.selectedIndex(at: CGPoint(x: rect.minX, y: rect.minY)))
+                        for other in layout.items.dropFirst(index + 1) { XCTAssertFalse(rect.intersects(other)) }
+                    }
                 }
             }
         }
-        let point = CGPoint(x: -700, y: 100)
-        let above = PillLayout(anchor: point, visible: visible, count: 3)
-        XCTAssertFalse(above.below)
-        XCTAssertGreaterThan(above.frame.minY, point.y)
-        let below = PillLayout(anchor: CGPoint(x: -700, y: 680), visible: visible, count: 3)
-        XCTAssertTrue(below.below)
-        XCTAssertLessThan(below.frame.maxY, 680)
-        let ranges = (0..<3).map { snippetPage(count: 12, page: $0) }
-        XCTAssertEqual(ranges, [0..<5, 5..<10, 10..<12])
-        XCTAssertEqual(ranges.flatMap { Array($0) }, Array(0..<12))
-        XCTAssertEqual(snippetPage(count: 0, page: 0), 0..<0)
-        XCTAssertEqual(snippetPage(count: 2, page: 99), 0..<2)
+        XCTAssertNil(RadialLayout(anchor: .zero, visible: CGRect(x: 0, y: 0, width: 100, height: 100), count: 24))
+        XCTAssertNil(RadialLayout(anchor: .zero, visible: CGRect(x: 0, y: 0, width: 1440, height: 900), count: 0))
+        XCTAssertNil(RadialLayout(anchor: .zero, visible: CGRect(x: 0, y: 0, width: 1440, height: 900), count: 10000))
     }
     func testOldAnimationCannotHideOrEnableNewMenu() {
         var state = MenuPresentation()
@@ -240,68 +222,44 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(controller.panel.isVisible)
     }
     @MainActor
-    func testAcceptedDropClosesGuideWithoutClaimingAuthorization() async throws {
+    func testNativeRadialPreviewSelectionAndDisabledSnippets() throws {
         let controller = FloatingPanelController()
-        controller.showAuthorization(status: .needsAccessibility, feedback: "", applicationURL: Bundle.main.bundleURL)
-        try await Task.sleep(for: .milliseconds(220))
-        let dragRow = try XCTUnwrap(controller.panel.contentView?.subviews.compactMap { $0 as? ApplicationDragView }.first)
-        var accepted: [Bool] = []
-        controller.onApplicationDragEnded = { accepted.append($0) }
-        dragRow.finishDrag(operation: [])
-        XCTAssertTrue(controller.isAuthorization)
-        dragRow.finishDrag(operation: .copy)
-        XCTAssertFalse(controller.isPresented)
-        try await Task.sleep(for: .milliseconds(180))
-        XCTAssertFalse(controller.panel.isVisible)
-        XCTAssertEqual(accepted, [false, true])
-    }
-    @MainActor
-    func testAuthorizationAnimationCannotReplaceNewSnippetMenu() async throws {
-        let controller = FloatingPanelController()
-        controller.onDismiss = { }
-        let panel = controller.panel
-        controller.showAuthorization(status: .needsAccessibility, feedback: "拖入后开启开关",
-                                     applicationURL: Bundle.main.bundleURL)
-        XCTAssertTrue(controller.isAuthorization)
-        controller.hide()
-        let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),
-                                 displayName: "Preview", buttons: [Snippet(title: "继续", text: "正文")])
-        let point = try unobstructedTestPoint(controller: controller, profile: profile)
-        guard controller.show(profile: profile, at: point) else {
-            controller.hide(); throw XCTSkip("An actual foreign overlay occupies the native test area")
-        }
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertTrue(controller.panel === panel)
-        XCTAssertTrue(controller.isPresented)
-        XCTAssertFalse(controller.isAuthorization)
-        XCTAssertEqual(controller.content, .snippets)
-        XCTAssertEqual(controller.panel.alphaValue, 1, accuracy: 0.01)
-        controller.hide()
-        try await Task.sleep(for: .milliseconds(150))
-    }
-    @MainActor
-    func testNativePillPreviewAndTransparentMargins() throws {
-        let controller = FloatingPanelController()
-        let snippets = [Snippet(title: "继续", text: "正文"), Snippet(title: "检查", text: "正文"), Snippet(title: "解释", text: "正文")]
+        let snippets = [Snippet(title: "继续", text: "正文"), Snippet(title: "检查", text: "正文"),
+                        Snippet(title: "解释", text: "正文"), Snippet(title: "隐藏", text: "正文", isEnabled: false)]
         let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),
                                  displayName: "Preview", buttons: snippets)
-        controller.configure(profile: profile, at: CGPoint(x: 500, y: 400), visible: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        XCTAssertTrue(controller.configure(profile: profile, at: CGPoint(x: 500, y: 400),
+                                            visible: CGRect(x: 0, y: 0, width: 1000, height: 800)))
         XCTAssertFalse(controller.panel.canBecomeKey)
         XCTAssertFalse(controller.panel.canBecomeMain)
-        XCTAssertFalse(controller.isInteractive(CGPoint(x: 100, y: 8)))
-        XCTAssertFalse(controller.isInteractive(CGPoint(x: 10, y: 10)))
-        XCTAssertTrue(controller.isInteractive(CGPoint(x: 252, y: 44)), "Close remains interactive")
+        let layout = try XCTUnwrap(controller.layout)
+        XCTAssertEqual(layout.items.count, 3)
+        XCTAssertFalse(controller.isInteractive(layout.localAnchor))
         let root = try XCTUnwrap(controller.panel.contentView)
-        let layout = PillLayout(anchor: CGPoint(x: 500, y: 400), visible: CGRect(x: 0, y: 0, width: 1000, height: 800), count: 3)
         for index in 0..<3 {
             let rect = layout.itemRect(index: index)
-            XCTAssertTrue(root.hitTest(CGPoint(x: rect.midX, y: rect.midY)) is PillButton)
+            XCTAssertTrue(root.hitTest(CGPoint(x: rect.midX, y: rect.midY)) is RadialButton)
+            let button = try XCTUnwrap(root.subviews[index] as? RadialButton)
+            XCTAssertNil(button.action, "Click must never dispatch a paste")
         }
-        root.appearance = NSAppearance(named: .darkAqua)
+        try savePreview(root, name: "radial-normal.png")
+        (root.subviews.first as? RadialButton)?.selected = true
+        try savePreview(root, name: "radial-hover.png")
+        let many = AppProfile(application: profile.application, displayName: "Preview",
+                              buttons: (1...24).map { Snippet(title: "文案\($0)", text: "正文") })
+        XCTAssertTrue(controller.configure(profile: many, at: CGPoint(x: -1439, y: -199),
+                                            visible: CGRect(x: -1440, y: -200, width: 1440, height: 900)))
+        try savePreview(try XCTUnwrap(controller.panel.contentView), name: "radial-edge-24.png")
+    }
+    @MainActor
+    private func savePreview(_ root: NSView, name: String) throws {
+        root.layoutSubtreeIfNeeded()
+        root.needsDisplay = true
+        root.subviews.forEach { $0.needsDisplay = true }
         let bitmap = try XCTUnwrap(root.bitmapImageRepForCachingDisplay(in: root.bounds))
         root.cacheDisplay(in: root.bounds, to: bitmap)
-        let preview = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        XCTAssertFalse(preview.isEmpty)
+        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try data.write(to: previewDirectory().appendingPathComponent(name))
     }
     @MainActor
     func testClipboardRoundTripAndExactText() throws {
@@ -344,10 +302,6 @@ final class CoreTests: XCTestCase {
                        VisibleOverlay(ownerPID: 2, layer: 3, frame: CGRect(x: 900, y: 900, width: 300, height: 300), alpha: 1)] {
             XCTAssertFalse(hasForeignOverlay([window], ownPID: 1, menuFrame: menu))
         }
-        let option = ClickModifier.option.mask
-        XCTAssertTrue(pressedNewModifier(previous: 0, current: option))
-        XCTAssertFalse(pressedNewModifier(previous: option, current: 0))
-        XCTAssertFalse(pressedNewModifier(previous: option, current: option))
     }
     func testOrdinaryEditorWithMissingEnabledAttribute() {
         XCTAssertTrue(isOrdinaryTextInput(role: "AXTextArea", subrole: nil, enabled: nil))
@@ -433,5 +387,407 @@ final class CoreTests: XCTestCase {
         try Data().write(to: blocked)
         let blockedDisk = ConfigurationDisk(directory: blocked)
         do { try await blockedDisk.save(AppConfiguration()); XCTFail("Disk error must propagate") } catch { }
+    }
+}
+
+private actor StubInputWorker: InputTargetWorker {
+    private var captured: (UUID, pid_t)?
+    var acceptsCapture = true
+    var editable = true
+    var focusUnchanged = true
+    var selectionUnchanged = true
+    var invalidateBeforeDispatch = false
+    var preparationDelay: Duration = .zero
+    private var readyChecks = 0
+
+    func configure(editable: Bool = true, focusUnchanged: Bool = true, selectionUnchanged: Bool = true,
+                   invalidateBeforeDispatch: Bool = false, preparationDelay: Duration = .zero) {
+        self.editable = editable; self.focusUnchanged = focusUnchanged; self.selectionUnchanged = selectionUnchanged
+        self.invalidateBeforeDispatch = invalidateBeforeDispatch; self.preparationDelay = preparationDelay
+    }
+    private(set) var lastMode: MenuAnchorMode?
+    func captureTarget(id: UUID, pid: pid_t, position: CGPoint, mode: MenuAnchorMode) -> CapturedInputTarget? {
+        guard acceptsCapture else { return nil }
+        lastMode = mode
+        captured = (id, pid); readyChecks = 0
+        return CapturedInputTarget(id: id, caretBounds: mode == .caret ? CGRect(x: 50, y: 100, width: 0, height: 20) : nil)
+    }
+    func prepareCaptured(pid: pid_t, operationID: UUID) async throws -> PreparedInput {
+        if preparationDelay != .zero { try await Task.sleep(for: preparationDelay) }
+        guard captured?.0 == operationID, captured?.1 == pid, editable, focusUnchanged, selectionUnchanged else {
+            throw InputFailure("输入框或选区已变化")
+        }
+        return PreparedInput(before: nil, selection: NSRange(location: 0, length: 0))
+    }
+    func readyToPaste(_ id: UUID) -> Bool {
+        readyChecks += 1
+        return captured?.0 == id && editable && focusUnchanged && selectionUnchanged &&
+            (!invalidateBeforeDispatch || readyChecks < 2)
+    }
+    func readback(_ id: UUID) -> String? { nil }
+    func release(_ id: UUID) { if captured?.0 == id { captured = nil } }
+}
+
+@MainActor
+private final class StubPasteSystem {
+    var isCurrent = true
+    var released = true
+    var authorized = true
+    var clipboardChanged = false
+    var canDispatch = true
+    var copies: [String] = []
+    var dispatches = 0
+    var revision = 0
+    var environment: PasteEnvironment {
+        PasteEnvironment(targetIsCurrent: { _ in self.isCurrent }, modifiersReleased: { self.released },
+                         authorized: { self.authorized }, copy: { text in
+                             self.copies.append(text); self.revision += 1; return self.revision
+                         }, clipboardRevision: { self.revision + (self.clipboardChanged ? 1 : 0) },
+                         dispatch: {
+                             guard self.canDispatch else { return false }
+                             self.dispatches += 1; return true
+                         })
+    }
+}
+
+extension CoreTests {
+    @MainActor
+    func testCapturedTargetCannotBeReplacedAtReleaseOrUsedTwice() async {
+        let worker = StubInputWorker(), system = StubPasteSystem()
+        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let original = UUID(), replacement = UUID()
+        let target = NSRunningApplication.current
+        let snippet = Snippet(title: "测试", text: "  中文 👩🏽‍💻\n末尾\t\n")
+        let captured = await service.captureTarget(id: original, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+        XCTAssertNotNil(captured)
+        let wrong = await service.insert(snippet, target: target, sessionID: replacement)
+        XCTAssertEqual(wrong, .notWritten)
+        XCTAssertTrue(system.copies.isEmpty)
+        XCTAssertEqual(system.dispatches, 0)
+        let result = await service.insert(snippet, target: target, sessionID: original)
+        XCTAssertEqual(result, .dispatchedUnverified)
+        XCTAssertEqual(system.copies, [snippet.text])
+        XCTAssertEqual(system.dispatches, 1)
+        let repeated = await service.insert(snippet, target: target, sessionID: original)
+        XCTAssertEqual(repeated, .notWritten)
+        XCTAssertEqual(system.dispatches, 1)
+        XCTAssertEqual(system.copies.count, 1)
+    }
+    @MainActor
+    func testCapturedInputChangesPreventClipboardAndPaste() async {
+        for failure in ["application", "editor", "selection", "readonly", "permission", "modifier"] {
+            let worker = StubInputWorker(), system = StubPasteSystem()
+            let service = TextInsertionService(worker: worker, environment: system.environment)
+            let token = UUID(), target = NSRunningApplication.current
+            _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+            switch failure {
+            case "application": system.isCurrent = false
+            case "editor": await worker.configure(focusUnchanged: false)
+            case "selection": await worker.configure(selectionUnchanged: false)
+            case "readonly": await worker.configure(editable: false)
+            case "permission": system.authorized = false
+            default: system.released = false
+            }
+            let result = await service.insert(Snippet(title: "测试", text: "正文"), target: target, sessionID: token)
+            XCTAssertEqual(result, .notWritten, failure)
+            XCTAssertTrue(system.copies.isEmpty, failure)
+            XCTAssertEqual(system.dispatches, 0, failure)
+        }
+    }
+    @MainActor
+    func testClipboardChangeAndFinalFocusCheckPreventDispatch() async {
+        for changedClipboard in [false, true] {
+            let worker = StubInputWorker(), system = StubPasteSystem()
+            let service = TextInsertionService(worker: worker, environment: system.environment)
+            let token = UUID(), target = NSRunningApplication.current
+            _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+            system.clipboardChanged = changedClipboard
+            await worker.configure(invalidateBeforeDispatch: !changedClipboard)
+            let result = await service.insert(Snippet(title: "测试", text: "正文"), target: target, sessionID: token)
+            XCTAssertEqual(result, .notWritten)
+            XCTAssertEqual(system.copies, ["正文"])
+            XCTAssertEqual(system.dispatches, 0)
+            XCTAssertTrue(service.message.contains("文案已复制"))
+        }
+    }
+    @MainActor
+    func testCancellationDuringPreparationAndConcurrentInsert() async {
+        let worker = StubInputWorker(), system = StubPasteSystem()
+        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let token = UUID(), target = NSRunningApplication.current
+        _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+        await worker.configure(preparationDelay: .milliseconds(80))
+        let snippet = Snippet(title: "测试", text: "正文")
+        let first = Task { await service.insert(snippet, target: target, sessionID: token) }
+        while !service.isBusy { await Task.yield() }
+        let duplicate = await service.insert(snippet, target: target, sessionID: token)
+        XCTAssertEqual(duplicate, .notWritten)
+        service.cancel()
+        let cancelled = await first.value
+        XCTAssertEqual(cancelled, .notWritten)
+        XCTAssertTrue(system.copies.isEmpty)
+        XCTAssertEqual(system.dispatches, 0)
+        XCTAssertFalse(service.isBusy)
+    }
+    @MainActor
+    func testFailedEventCreationDoesNotClaimDispatch() async {
+        let worker = StubInputWorker(), system = StubPasteSystem()
+        system.canDispatch = false
+        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let token = UUID(), target = NSRunningApplication.current
+        _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+        let result = await service.insert(Snippet(title: "测试", text: "正文"), target: target, sessionID: token)
+        XCTAssertEqual(result, .notWritten)
+        XCTAssertEqual(system.dispatches, 0)
+    }
+    @MainActor
+    func testModifierReleaseWaitTimeoutAndNewHoldInvalidation() async {
+        XCTAssertEqual(HoldMenuSession.modifierReleaseTimeout, .milliseconds(500))
+        var session = HoldMenuSession()
+        let token = session.begin(.shortcut)!
+        _ = session.show(token); _ = session.release(.shortcut, selection: UUID())
+        let timeout = await waitForModifierRelease(timeout: .milliseconds(20), released: { false }, current: { session.isCurrent(token) })
+        XCTAssertFalse(timeout)
+        let pending = Task {
+            await waitForModifierRelease(released: { false }, current: { session.isCurrent(token) })
+        }
+        await Task.yield()
+        session.cancel(); _ = session.begin(.modifier)
+        let cancelled = await pending.value
+        XCTAssertFalse(cancelled)
+        XCTAssertFalse(session.commit(token))
+        let immediate = await waitForModifierRelease(released: { true }, current: { true })
+        XCTAssertTrue(immediate)
+        var released = false
+        let releaseTask = Task { try? await Task.sleep(for: .milliseconds(20)); released = true }
+        let eventually = await waitForModifierRelease(released: { released }, current: { true })
+        await releaseTask.value
+        XCTAssertTrue(eventually)
+    }
+}
+
+extension CoreTests {
+    @MainActor
+    func testTwentyNativeMenuHoldSelectionsDispatchExactlyOnce() async throws {
+        let controller = FloatingPanelController()
+        controller.onDismiss = { }
+        let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),
+                                 displayName: "Preview", buttons: [Snippet(title: "继续", text: "继续正文"),
+                                                                  Snippet(title: "检查", text: "检查正文"),
+                                                                  Snippet(title: "解释", text: "解释正文")])
+        let point = try unobstructedTestPoint(controller: controller, profile: profile)
+        defer { controller.hide() }
+        let worker = StubInputWorker(), system = StubPasteSystem()
+        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let target = NSRunningApplication.current
+        var session = HoldMenuSession()
+        for iteration in 0..<40 {
+            let mode: MenuAnchorMode = iteration < 20 ? .mouse : .caret
+            let token = try XCTUnwrap(session.begin(.modifier))
+            let captured = await service.captureTarget(id: token, pid: target.processIdentifier,
+                                                      mouse: point, primaryScreenTop: 900, mode: mode)
+            XCTAssertNotNil(captured)
+            XCTAssertTrue(session.show(token))
+            XCTAssertTrue(controller.show(profile: profile, at: point, initialMouse: point, requiresMovement: mode == .caret))
+            try await Task.sleep(for: .milliseconds(210))
+            let layout = try XCTUnwrap(controller.layout)
+            let rect = layout.items[iteration % 3]
+            let selectedPoint = CGPoint(x: rect.midX, y: rect.midY)
+            XCTAssertEqual(controller.updateSelection(at: selectedPoint), profile.buttons[iteration % 3].id)
+            XCTAssertNil(controller.updateSelection(at: point), "Moving back to center clears selection")
+            let selected = controller.updateSelection(at: selectedPoint)
+            XCTAssertEqual(session.release(.modifier, selection: selected), token)
+            controller.hide()
+            XCTAssertFalse(controller.isPresented)
+            XCTAssertNil(controller.selectedID)
+            XCTAssertNil(session.release(.modifier, selection: selected))
+            XCTAssertTrue(session.commit(token))
+            let result = await service.insert(profile.buttons[iteration % 3], target: target, sessionID: token)
+            XCTAssertEqual(result, .dispatchedUnverified)
+            XCTAssertEqual(system.dispatches, iteration + 1)
+            XCTAssertEqual(system.copies.last, profile.buttons[iteration % 3].text)
+            session.cancel()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(controller.panel.isVisible)
+        XCTAssertEqual(system.copies.count, 40)
+    }
+}
+
+
+extension CoreTests {
+    func testAuthorizationSingleActionTransitionsAndRecovery() {
+        var flow = AuthorizationFlow()
+        flow.refresh(accessibility: false, paste: false)
+        XCTAssertEqual(flow.step, .authorize)
+        flow.refresh(accessibility: true, paste: true)
+        XCTAssertEqual(flow.step, .restart, "A newly enabled grant requires one restart")
+        flow.refresh(accessibility: true, paste: true)
+        XCTAssertEqual(flow.step, .restart)
+        var restarted = AuthorizationFlow(afterRestart: true)
+        restarted.refresh(accessibility: true, paste: false)
+        XCTAssertEqual(restarted.step, .reauthorize)
+        restarted.refresh(accessibility: true, paste: true)
+        XCTAssertEqual(restarted.step, .ready)
+        restarted.refresh(accessibility: false, paste: true)
+        XCTAssertEqual(restarted.step, .authorize)
+        restarted.refresh(accessibility: true, paste: false)
+        XCTAssertEqual(restarted.step, .restart)
+    }
+    func testLegacyAnchorPreferenceDefaultsAndRoundTrips() throws {
+        let legacy = Data(#"{"isEnabled":true,"clickModifier":"option"}"#.utf8)
+        var preferences = try JSONDecoder().decode(Preferences.self, from: legacy)
+        XCTAssertEqual(preferences.menuAnchorMode, .mouse)
+        preferences.menuAnchorMode = .caret
+        XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences)), preferences)
+        XCTAssertThrowsError(try JSONDecoder().decode(Preferences.self,
+            from: Data(#"{"isEnabled":true,"clickModifier":"option","menuAnchorMode":"unknown"}"#.utf8)))
+    }
+    func testCaretAnchorAndInvalidCoordinateFallback() {
+        let screens = [CGRect(x: -1440, y: -200, width: 1440, height: 900), CGRect(x: 0, y: 0, width: 1440, height: 900)]
+        let mouse = CGPoint(x: 300, y: 200)
+        let bounds = CGRect(x: -100, y: 300, width: 0, height: 20)
+        let caret = MenuAnchor(mode: .caret, mouse: mouse, caretBounds: bounds, primaryScreenTop: 900, screens: screens)
+        XCTAssertEqual(caret.point, CGPoint(x: -100, y: 590))
+        XCTAssertFalse(caret.usedMouseFallback)
+        for rect: CGRect? in [nil, .zero, CGRect(x: CGFloat.infinity, y: 0, width: 0, height: 20),
+                             CGRect(x: 2000, y: 0, width: 0, height: 20)] {
+            let fallback = MenuAnchor(mode: .caret, mouse: mouse, caretBounds: rect, primaryScreenTop: 900, screens: screens)
+            XCTAssertEqual(fallback.point, mouse); XCTAssertTrue(fallback.usedMouseFallback)
+        }
+        XCTAssertEqual(MenuAnchor(mode: .mouse, mouse: mouse, caretBounds: bounds,
+                                  primaryScreenTop: 900, screens: screens).point, mouse)
+    }
+    func testCaretSelectionRequiresActualMouseMovement() {
+        var movement = SelectionMovement(initialMouse: CGPoint(x: 100, y: 100), requiresMovement: true)
+        XCTAssertFalse(movement.update(CGPoint(x: 100, y: 100)))
+        XCTAssertFalse(movement.update(CGPoint(x: 103, y: 100)))
+        XCTAssertTrue(movement.update(CGPoint(x: 104, y: 100)))
+        XCTAssertTrue(movement.update(CGPoint(x: 100, y: 100)))
+    }
+    func testEdgeTranslationPreservesRingGeometry() throws {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        for count in [1, 3, 6, 12, 24] {
+            let middle = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 720, y: 450), visible: screen, count: count))
+            let edge = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 1, y: 1), visible: screen, count: count))
+            for (a, b) in zip(middle.items, edge.items) {
+                XCTAssertEqual(a.midX - middle.center.x, b.midX - edge.center.x, accuracy: 0.001)
+                XCTAssertEqual(a.midY - middle.center.y, b.midY - edge.center.y, accuracy: 0.001)
+            }
+            for ringStart in stride(from: 0, to: min(count, 6), by: 1) {
+                let rect = middle.items[ringStart]
+                XCTAssertEqual(hypot(rect.midX - middle.center.x, rect.midY - middle.center.y), 100, accuracy: 0.001)
+            }
+        }
+    }
+    @MainActor
+    func testCaptureModeAndTargetSnapshotPassThrough() async throws {
+        let worker = StubInputWorker()
+        let service = TextInsertionService(worker: worker, environment: StubPasteSystem().environment)
+        for mode in MenuAnchorMode.allCases {
+            let token = UUID()
+            let result = await service.captureTarget(id: token, pid: getpid(),
+                mouse: CGPoint(x: 500, y: 500), primaryScreenTop: 900, mode: mode)
+            let captured = try XCTUnwrap(result)
+            XCTAssertEqual(captured.id, token)
+            XCTAssertEqual(captured.caretBounds != nil, mode == .caret)
+            let recordedMode = await worker.lastMode
+            XCTAssertEqual(recordedMode, mode)
+        }
+    }
+    @MainActor
+    func testRestartFailureKeepsSingleActionAndClearsMarker() async throws {
+        for saveSucceeds in [false, true] {
+            let suite = "PhrasePerch.Tests." + UUID().uuidString
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            var launches = 0, terminations = 0
+            let environment = AuthorizationEnvironment(snapshot: { (true, false) }, save: { _ in saveSucceeds },
+                openSettings: { false }, relaunch: { _, _ in launches += 1; throw InputFailure("test launch failure") },
+                terminate: { terminations += 1 })
+            let coordinator = AppCoordinator(authorization: environment, defaults: defaults)
+            defer { coordinator.stop() }
+            for _ in 0..<100 where !coordinator.store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertTrue(coordinator.store.isReady)
+            coordinator.refreshPermissions(); coordinator.performAuthorizationAction()
+            for _ in 0..<100 where coordinator.isRestarting { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertFalse(coordinator.isRestarting)
+            XCTAssertEqual(coordinator.authorizationStep, .restart)
+            XCTAssertEqual(launches, saveSucceeds ? 1 : 0)
+            XCTAssertEqual(terminations, 0)
+            XCTAssertNil(defaults.string(forKey: AppCoordinator.restartPendingKey))
+            XCTAssertFalse(coordinator.restartExitReady)
+        }
+    }
+    @MainActor
+    func testFailedRestartReadbackOffersReauthorizationWithoutOverlay() throws {
+        let suite = "PhrasePerch.Tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(Bundle.main.bundlePath, forKey: AppCoordinator.restartPendingKey)
+        var opened = 0
+        let coordinator = AppCoordinator(authorization: AuthorizationEnvironment(snapshot: { (true, false) },
+            openSettings: { opened += 1; return false }), defaults: defaults)
+        defer { coordinator.stop() }
+        coordinator.refreshPermissions()
+        XCTAssertEqual(coordinator.authorizationStep, .reauthorize)
+        coordinator.performAuthorizationAction()
+        XCTAssertEqual(opened, 1)
+        XCTAssertEqual(coordinator.authorizationStep, .reauthorize)
+        XCTAssertFalse(NSApp.windows.contains { $0.title == "PhrasePerch — 授权引导" })
+        XCTAssertFalse(coordinator.notice.contains("等待"))
+    }
+}
+
+extension CoreTests {
+    @MainActor
+    func testSelectionTracksPresentedButtonDuringEntrance() async throws {
+        let controller = FloatingPanelController()
+        controller.onDismiss = { }
+        let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),
+                                 displayName: "Preview", buttons: [Snippet(title: "继续", text: "正文")])
+        let point = try unobstructedTestPoint(controller: controller, profile: profile)
+        defer { controller.hide() }
+        XCTAssertTrue(controller.show(profile: profile, at: point, initialMouse: point, requiresMovement: true))
+        XCTAssertNil(controller.updateSelection(at: point))
+        try await Task.sleep(for: .milliseconds(40))
+        let button = try XCTUnwrap(controller.panel.contentView?.subviews.first as? RadialButton)
+        let layer = try XCTUnwrap(button.layer?.presentation())
+        let shown = layer.frame
+        let screenPoint = CGPoint(x: controller.panel.frame.minX + shown.midX, y: controller.panel.frame.minY + shown.midY)
+        XCTAssertEqual(controller.updateSelection(at: screenPoint), profile.buttons[0].id)
+        controller.hide()
+        XCTAssertNil(controller.updateSelection(at: screenPoint))
+    }
+}
+
+extension CoreTests {
+    @MainActor
+    func testAuthorizationDragCardUsesCurrentApplicationAndNoExtraActions() throws {
+        let guide = AuthorizationGuideController()
+        defer { guide.hide() }
+        guide.configure(applicationURL: Bundle.main.bundleURL, frame: CGRect(x: 0, y: 0, width: 420, height: 112))
+        let root = try XCTUnwrap(guide.panel.contentView)
+        let row = try XCTUnwrap(root.subviews.compactMap { $0 as? ApplicationDragView }.first)
+        XCTAssertEqual(row.applicationURL, Bundle.main.bundleURL)
+        let item = row.draggingItem().item
+        XCTAssertEqual((item as? NSURL)?.path, Bundle.main.bundleURL.path)
+        XCTAssertTrue(root.hitTest(CGPoint(x: row.frame.maxX - 4, y: row.frame.midY)) === row)
+        XCTAssertEqual(root.subviews.compactMap { $0 as? NSButton }.map(\.title), ["×"])
+        XCTAssertFalse(guide.panel.canBecomeKey)
+        var accepted: [Bool] = []
+        guide.onDragEnded = { accepted.append($0) }
+        guide.panel.orderFrontRegardless()
+        row.finishDrag(operation: [])
+        XCTAssertTrue(guide.isVisible)
+        row.finishDrag(operation: .copy)
+        XCTAssertFalse(guide.isVisible)
+        XCTAssertEqual(accepted, [false, true])
+        try savePreview(root, name: "authorization-drag-restored.png")
+    }
+    func testAuthorizationCardFitsNegativeCoordinateDisplay() {
+        let visible = CGRect(x: -1440, y: -200, width: 1440, height: 900)
+        let frame = authorizationGuideFrame(settings: CGRect(x: -900, y: -180, width: 800, height: 800), visible: visible)
+        XCTAssertTrue(visible.contains(frame))
     }
 }

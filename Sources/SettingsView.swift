@@ -315,8 +315,8 @@ private struct ProfileEditor: View {
             }
 
             Picker("触发方式", selection: $profile.displayMode) {
-                Text("修饰键点击与快捷键").tag(DisplayMode.modifierClick)
-                Text("仅使用快捷键").tag(DisplayMode.shortcutOnly)
+                Text("按住修饰键或快捷键").tag(DisplayMode.modifierClick)
+                Text("仅按住快捷键").tag(DisplayMode.shortcutOnly)
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 380, alignment: .leading)
@@ -478,7 +478,7 @@ private struct SettingsPage: View {
                             set: { coordinator.store.configuration.preferences.isEnabled = $0 }))
                             .disabled(!coordinator.store.isReady)
                         Divider()
-                        Picker("点击或拖选的修饰键", selection: Binding(
+                        Picker("按住展开的触发键", selection: Binding(
                             get: { coordinator.store.configuration.preferences.clickModifier },
                             set: { coordinator.store.configuration.preferences.clickModifier = $0 })) {
                             Text("Option ⌥").tag(ClickModifier.option)
@@ -486,21 +486,26 @@ private struct SettingsPage: View {
                             Text("Shift ⇧").tag(ClickModifier.shift)
                         }
                         .disabled(!coordinator.store.isReady)
-                        Text("按住修饰键点击可编辑位置，或拖动选中文字；松开后打开快捷栏。")
+                        Picker("展开位置", selection: Binding(
+                            get: { coordinator.store.configuration.preferences.menuAnchorMode },
+                            set: { coordinator.store.configuration.preferences.menuAnchorMode = $0 })) {
+                            ForEach(MenuAnchorMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        .disabled(!coordinator.store.isReady)
+                        Text(coordinator.store.configuration.preferences.menuAnchorMode == .mouse
+                             ? "先点入输入框，将鼠标放在其中。按住触发键展开，移到文案按钮，松开后粘贴；未选中则取消。"
+                             : "先点入输入框。按住触发键从输入光标处展开，再移动鼠标选择文案，松开后粘贴。无法定位光标时改用鼠标位置。")
                             .font(.caption).foregroundStyle(.secondary)
-                        KeyboardShortcuts.Recorder("打开/收起快捷栏", name: .toggleFloatingInputBar)
+                        KeyboardShortcuts.Recorder("按住展开的快捷键", name: .toggleFloatingInputBar)
                     }
                 }
 
                 SurfaceCard(title: "系统权限", symbol: "hand.raised") {
                     VStack(alignment: .leading, spacing: 13) {
-                        PermissionRow(title: "辅助功能", detail: "读取当前应用和可编辑文本位置",
-                                      isReady: coordinator.accessibilityGranted,
-                                      authorize: coordinator.openAuthorizationSettings)
-                        Divider()
-                        PermissionRow(title: "粘贴输入", detail: "向目标应用发送一次粘贴快捷键",
-                                      isReady: coordinator.postEventsGranted,
-                                      authorize: coordinator.requestPasteAuthorization)
+                        PermissionRow(step: coordinator.authorizationStep,
+                                      detail: coordinator.authorizationDetail,
+                                      isRestarting: coordinator.isRestarting,
+                                      action: coordinator.performAuthorizationAction)
                         if !coordinator.mouseMonitorAvailable {
                             Text("鼠标触发暂不可用，仍可使用上方录制的快捷键。")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -547,24 +552,23 @@ private struct SettingsPage: View {
 }
 
 struct PermissionRow: View {
-    let title: String
-    let detail: String
-    let isReady: Bool
-    let authorize: () -> Void
-
+    var step: AuthorizationFlow.Step
+    var detail: String
+    var isRestarting = false
+    var action: () -> Void
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: isReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .font(.title3).foregroundStyle(isReady ? Color.green : Color.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.callout.weight(.medium))
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+            Image(systemName: step == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(step == .ready ? Color.green : Color.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("辅助功能").fontWeight(.semibold)
+                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            if isReady {
-                Text("已授权").font(.callout.weight(.medium)).foregroundStyle(Color.green)
+            Spacer(minLength: 16)
+            if step == .ready {
+                Text(step.title).foregroundStyle(.green)
             } else {
-                Button("授权", action: authorize).buttonStyle(.borderedProminent)
+                Button(isRestarting ? "正在重启…" : step.title, action: action).disabled(isRestarting)
             }
         }
     }
@@ -617,5 +621,3 @@ private func pageHeader(_ title: String, subtitle: String) -> some View {
         Text(subtitle).font(.callout).foregroundStyle(.secondary)
     }
 }
-
-enum AuthorizationAction { case settings, restart }

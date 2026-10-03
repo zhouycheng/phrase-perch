@@ -14,6 +14,32 @@ extension KeyboardShortcuts.Name {
     static let toggleFloatingInputBar = Self("toggleFloatingInputBar")
 }
 
+@MainActor
+struct AuthorizationEnvironment {
+    var snapshot: () -> (accessibility: Bool, paste: Bool) = { (AXIsProcessTrusted(), CGPreflightPostEventAccess()) }
+    var save: (ConfigurationStore) async -> Bool = { await $0.flush() }
+    var openSettings: () -> Bool = {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+    var relaunch: (URL, pid_t) throws -> Void = { url, pid in
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", """
+        restart_checks=0
+        while kill -0 "$1" 2>/dev/null; do
+            restart_checks=$((restart_checks + 1))
+            [ "$restart_checks" -lt 100 ] || exit 1
+            sleep 0.1
+        done
+        exec /usr/bin/open "$2"
+        """, "PhrasePerchRestart", String(pid), url.path]
+        process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+        try process.run()
+    }
+    var terminate: () -> Void = { NSApp.terminate(nil) }
+
+}
+
 @MainActor @Observable
 final class AppCoordinator: NSObject {
     let store = ConfigurationStore()
@@ -23,6 +49,16 @@ final class AppCoordinator: NSObject {
     private(set) var permissionFeedback = ""
     private(set) var isRestarting = false
     private(set) var restartExitReady = false
+    private(set) var authorizationFlow: AuthorizationFlow
+    var authorizationStep: AuthorizationFlow.Step { authorizationFlow.step }
+    var authorizationDetail: String {
+        switch authorizationStep {
+        case .authorize: "允许读取输入位置并粘贴文案；请在系统设置中添加当前 PhrasePerch 并开启。"
+        case .restart: "系统授权已开启，请重启 PhrasePerch 使权限生效。"
+        case .ready: "读取输入位置与粘贴文案均已就绪。"
+        case .reauthorize: "重启后粘贴仍未就绪；请在系统设置中重新添加当前 PhrasePerch。"
+        }
+    }
     var authorizationStatus: InputAuthorizationStatus {
         InputAuthorizationStatus(accessibility: accessibilityGranted, paste: postEventsGranted)
     }
@@ -33,52 +69,44 @@ final class AppCoordinator: NSObject {
     private(set) var loginEnabled = SMAppService.mainApp.status == .enabled
     var notice = ""
     private let floating = FloatingPanelController()
+    private let authorizationGuide = AuthorizationGuideController()
+    private var authorizationTask: Task<Void, Never>?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var target: NSRunningApplication?
-    private var dismissed = false
     private var sessionActive = true
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var mouseMonitor: Any?
     private var localMonitor: Any?
-    private var clickGesture: ModifierGesture?
-    private var gestureID: UUID?
-    private var gestureCapture: Task<Bool, Never>?
+    private var hold = HoldMenuSession()
+    private var holdTask: Task<Void, Never>?
+    private var previousModifiers: NSEvent.ModifierFlags = []
     private var timer: Timer?
     private var readyWasSeen = false
-    private var panelVersion = 0
-    private var authorizationOpening = false
     private var authorizationPending = false
     private var permissionTimer: Timer?
     private var permissionDeadline = Date.distantPast
+    private let authorizationEnvironment: AuthorizationEnvironment
+    private let authorizationDefaults: UserDefaults
+    static let restartPendingKey = "PhrasePerch.authorizationRestartPending"
 
-    override init() {
+    override convenience init() { self.init(authorization: AuthorizationEnvironment()) }
+    init(authorization: AuthorizationEnvironment, defaults: UserDefaults = .standard) {
+        authorizationEnvironment = authorization
+        authorizationDefaults = defaults
+        authorizationFlow = AuthorizationFlow(afterRestart: defaults.string(forKey: Self.restartPendingKey) == Bundle.main.bundlePath)
+        defaults.removeObject(forKey: Self.restartPendingKey)
         super.init()
         store.onChange = { [weak self] in self?.invalidate() }
-        floating.onInsert = { [weak self] id in self?.insert(id) }
         floating.onDismiss = { [weak self] in
-            self?.dismissed = true; self?.invalidate()
+            self?.invalidate()
         }
-        floating.onAuthorizationAction = { [weak self] action in
-            switch action {
-            case .restart: self?.restartForAuthorization()
-            case .settings: self?.openAuthorizationSettings()
-            }
-        }
-        floating.onApplicationDragEnded = { [weak self] accepted in
+        authorizationGuide.onDragEnded = { [weak self] accepted in
             guard let self else { return }
-            permissionFeedback = accepted ? "已添加到辅助功能列表，请开启 PhrasePerch。" : "尚未添加，请重新拖动 PhrasePerch。"
-            refreshPermissions()
-            watchAuthorization()
+            notice = accepted ? "应用已拖入，请在系统列表中开启开关，再返回重启。" : "尚未添加，请重新拖入应用。"
+            refreshPermissions(); watchAuthorization()
         }
-        floating.isOwnShortcut = { event in
-            guard let recorded = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar),
-                  let pressed = KeyboardShortcuts.Shortcut(event: event) else { return false }
-            return recorded == pressed
-        }
-        floating.shortcutModifiers = {
-            KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar)?.modifiers ?? []
-        }
+
     }
     func start() {
         applyEntryVisibility()
@@ -95,25 +123,27 @@ final class AppCoordinator: NSObject {
         observe(workspace, NSWorkspace.activeSpaceDidChangeNotification) { [weak self] in self?.invalidate() }
         observe(NotificationCenter.default, NSApplication.didChangeScreenParametersNotification) { [weak self] in self?.invalidate() }
         observe(NotificationCenter.default, NSApplication.didBecomeActiveNotification) { [weak self] in self?.refreshPermissions() }
-        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp, .leftMouseDragged, .leftMouseDown, .flagsChanged]) { [weak self] event in
-            self?.observeMouseGesture(event)
+        let events: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .otherMouseDown,
+                                             .flagsChanged, .keyDown, .keyUp, .scrollWheel]
+        previousModifiers = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift])
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] event in
+            self?.observeHoldEvent(event)
         }
         mouseMonitorAvailable = mouseMonitor != nil
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .flagsChanged, .keyDown]) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
             if event.type == .keyDown,
                NSApp.isActive, NSApp.modalWindow == nil,
                isCommandQuitShortcut(charactersIgnoringModifiers: event.charactersIgnoringModifiers,
                                      modifiers: event.modifierFlags) {
-                self?.quit()
-                return nil
+                self?.quit(); return nil
             }
-            if event.type == .flagsChanged { self?.clickGesture?.observe(flags: event.modifierFlags.rawValue) }
-            else if event.type == .leftMouseDown, let self, event.window !== self.floating.panel { self.invalidate() }
+            self?.observeHoldEvent(event)
             return event
         }
-        KeyboardShortcuts.onKeyUp(for: .toggleFloatingInputBar) { [weak self] in self?.togglePanel() }
+        KeyboardShortcuts.onKeyDown(for: .toggleFloatingInputBar) { [weak self] in self?.beginHold(.shortcut) }
+        KeyboardShortcuts.onKeyUp(for: .toggleFloatingInputBar) { [weak self] in self?.releaseHold(.shortcut) }
         refreshPermissions(); frontChanged()
-        // AX queries only on editor clicks, explicit shortcuts, and insertion; no focus polling.
+        // AX queries only on a trigger press and insertion; no focus polling.
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -143,7 +173,6 @@ final class AppCoordinator: NSObject {
             item.button?.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: "PhrasePerch")
             let menu = NSMenu()
             menu.addItem(withTitle: "启用／暂停", action: #selector(toggleEnabled), keyEquivalent: "")
-            menu.addItem(withTitle: "显示／收起快捷栏", action: #selector(togglePanel), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "打开 PhrasePerch", action: #selector(openSettings), keyEquivalent: ",")
             menu.addItem(withTitle: "导入配置…", action: #selector(importConfiguration), keyEquivalent: "")
@@ -178,24 +207,25 @@ final class AppCoordinator: NSObject {
     private func tick() {
         if store.isReady, !readyWasSeen { readyWasSeen = true; frontChanged() }
         statusItem?.menu?.items.first?.state = store.configuration.preferences.isEnabled ? .on : .off
-        if !store.configuration.preferences.isEnabled && !floating.isAuthorization && !authorizationPending { invalidate() }
+        if !store.configuration.preferences.isEnabled && !authorizationPending { invalidate() }
     }
     func refreshPermissions() {
         let previous = authorizationStatus
-        let trusted = AXIsProcessTrusted(), events = CGPreflightPostEventAccess()
-        if (accessibilityGranted && !trusted || postEventsGranted && !events) && !floating.isAuthorization { invalidate() }
+        let wasTrusted = accessibilityGranted
+        let snapshot = authorizationEnvironment.snapshot()
+        let trusted = snapshot.accessibility, events = snapshot.paste
+        if (accessibilityGranted && !trusted || postEventsGranted && !events) { invalidate() }
         accessibilityGranted = trusted; postEventsGranted = events
         if authorizationStatus == .ready { stopAuthorizationWatch() }
         if authorizationStatus != previous {
             permissionFeedback = authorizationStatus == .ready ? "权限已就绪，可以使用快捷栏。" : "权限状态已更新。"
         }
-        if floating.isAuthorization {
-            floating.updateAuthorization(status: authorizationStatus, feedback: permissionFeedback)
-            if authorizationStatus == .ready { floating.hide() }
-        }
+        authorizationFlow.refresh(accessibility: trusted, paste: events)
+        if (trusted && !wasTrusted) || authorizationStatus == .ready { authorizationGuide.hide() }
         loginEnabled = SMAppService.mainApp.status == .enabled
     }
     private func stopAuthorizationWatch() {
+        authorizationTask?.cancel(); authorizationTask = nil
         permissionTimer?.invalidate(); permissionTimer = nil
         authorizationPending = false
     }
@@ -214,42 +244,35 @@ final class AppCoordinator: NSObject {
             }
         }
     }
-    func openAuthorizationSettings() {
-        invalidate(); refreshPermissions()
-        authorizationOpening = true
-        let opened = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-        permissionFeedback = opened
-            ? "在系统设置的“辅助功能”中添加 PhrasePerch 并开启权限，状态会自动更新。"
-            : "无法打开授权页面。请在系统设置的“隐私与安全性”中打开“辅助功能”。"
+    func performAuthorizationAction() {
         refreshPermissions()
-        let version = panelVersion
-        Task {
-            // System Settings opens asynchronously; bounded wait uses window metadata, not AX permission.
-            for _ in 0..<20 {
-                guard version == panelVersion else { return }
-                if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" { break }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            guard version == panelVersion else { return }
-            authorizationOpening = false
-            guard opened, NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" else {
-                notice = "未能打开系统授权页面，请重试。"; return
-            }
-            if authorizationStatus != .ready {
-                floating.showAuthorization(status: authorizationStatus, feedback: permissionFeedback,
-                                           applicationURL: Bundle.main.bundleURL)
-                watchAuthorization()
-            }
+        switch authorizationStep {
+        case .authorize, .reauthorize: openAuthorizationSettings()
+        case .restart: restartForAuthorization()
+        case .ready: break
         }
     }
-    func requestPasteAuthorization() {
-        refreshPermissions()
-        guard !postEventsGranted else { return }
-        _ = CGRequestPostEventAccess()
-        refreshPermissions()
-        permissionFeedback = postEventsGranted ? "粘贴权限已就绪。" : "等待系统确认粘贴权限。"
+    func openAuthorizationSettings() {
+        invalidate(); refreshPermissions()
+        let opened = authorizationEnvironment.openSettings()
+        permissionFeedback = opened
+            ? "请在系统设置中添加并开启当前 PhrasePerch，然后返回应用重启。"
+            : "无法打开授权页面。请手动打开系统设置的权限列表，添加并开启当前 PhrasePerch。"
         notice = permissionFeedback
-        watchAuthorization()
+        if opened {
+            watchAuthorization()
+            authorizationTask = Task { [weak self] in
+                for _ in 0..<20 {
+                    guard !Task.isCancelled else { return }
+                    if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                guard let self, !Task.isCancelled,
+                      NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences",
+                      authorizationStep == .authorize || authorizationStep == .reauthorize else { return }
+                authorizationGuide.show(applicationURL: Bundle.main.bundleURL)
+            }
+        }
     }
     func restartForAuthorization() {
         guard !isRestarting else { return }
@@ -258,30 +281,17 @@ final class AppCoordinator: NSObject {
         }
         invalidate(); isRestarting = true; permissionFeedback = "正在保存配置并重新启动…"
         Task {
-            guard await store.flush() else {
+            guard await authorizationEnvironment.save(store) else {
                 isRestarting = false; notice = "配置未保存，已取消重启。请先处理保存错误。"; return
             }
             do {
-                let relaunch = Process()
-                relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-                // Wait for this process to exit before reopening, so two window sets never coexist.
-                let script = """
-                restart_checks=0
-                while kill -0 "$1" 2>/dev/null; do
-                    restart_checks=$((restart_checks + 1))
-                    [ "$restart_checks" -lt 100 ] || exit 1
-                    sleep 0.1
-                done
-                exec /usr/bin/open "$2"
-                """
-                relaunch.arguments = ["-c", script, "PhrasePerchRestart", String(getpid()), Bundle.main.bundlePath]
-                relaunch.standardOutput = FileHandle.nullDevice
-                relaunch.standardError = FileHandle.nullDevice
-                try relaunch.run()
+                authorizationDefaults.set(Bundle.main.bundlePath, forKey: Self.restartPendingKey)
+                try authorizationEnvironment.relaunch(Bundle.main.bundleURL, getpid())
                 // Already saved: don't repeat an async save inside AppKit's nested termination loop.
                 restartExitReady = true
-                NSApp.terminate(nil)
+                authorizationEnvironment.terminate()
             } catch {
+                authorizationDefaults.removeObject(forKey: Self.restartPendingKey)
                 isRestarting = false; notice = "重启失败：\(error.localizedDescription)。当前应用仍在运行。"
             }
         }
@@ -295,7 +305,7 @@ final class AppCoordinator: NSObject {
 
     private func frontChanged() {
         let next = NSWorkspace.shared.frontmostApplication
-        let checking = authorizationOpening || floating.isAuthorization || authorizationPending
+        let checking = authorizationPending || authorizationGuide.isVisible
         refreshPermissions()
         if checking,
            next?.bundleIdentifier == "com.apple.systempreferences" || next?.bundleIdentifier == Bundle.main.bundleIdentifier {
@@ -303,88 +313,143 @@ final class AppCoordinator: NSObject {
             target = next; return
         }
         if let target, next?.isEqual(target) == true, !target.isTerminated { return }
-        invalidate(); target = next; dismissed = false
+        invalidate(); target = next
     }
     private func invalidate() {
-        authorizationOpening = false
         stopAuthorizationWatch()
-        panelVersion += 1; clickGesture = nil; gestureID = nil; gestureCapture?.cancel(); gestureCapture = nil
+        authorizationGuide.hide()
+        let captured = hold.id
+        hold.cancel(); holdTask?.cancel(); holdTask = nil
         input.cancel(); floating.hide()
+        if let captured { Task { await input.releaseTarget(captured) } }
     }
     func profile(for application: NSRunningApplication) -> AppProfile? {
         let identity = ApplicationIdentity(bundleIdentifier: application.bundleIdentifier,
                                             fallbackBundlePath: application.bundleURL?.path)
         return store.configuration.profiles.first { $0.application.key == identity.key }
     }
-    private func observeMouseGesture(_ event: NSEvent) {
+    private func isOwnShortcut(_ event: NSEvent) -> Bool {
+        guard let recorded = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar),
+              let pressed = KeyboardShortcuts.Shortcut(event: event) else { return false }
+        return recorded == pressed
+    }
+    private func observeHoldEvent(_ event: NSEvent) {
+        if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == clipboardPasteEventTag { return }
+        let relevant = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let previous = previousModifiers
+        if event.type == .flagsChanged { previousModifiers = relevant }
         if authorizationPending, NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" {
             if event.type == .leftMouseUp { refreshPermissions(); watchAuthorization() }
             return
         }
-        if authorizationOpening || floating.isAuthorization { return }
-        if event.type == .flagsChanged {
-            clickGesture?.observe(flags: event.modifierFlags.rawValue)
-            return
+        switch event.type {
+        case .flagsChanged:
+            if hold.trigger == .shortcut {
+                let allowed = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar)?.modifiers ?? []
+                if !relevant.isSubset(of: allowed) { invalidate() }
+                return
+            }
+            let modifier = NSEvent.ModifierFlags(rawValue: store.configuration.preferences.clickModifier.mask)
+            if hold.trigger == .modifier && hold.phase != .waitingForModifiers && hold.phase != .inserting {
+                if relevant.isEmpty { releaseHold(.modifier) }
+                else if relevant != modifier { invalidate() }
+            } else if relevant == modifier && previous != modifier {
+                beginHold(.modifier)
+            }
+        case .keyDown:
+            if isOwnShortcut(event) { beginHold(.shortcut) }
+            else if hold.id != nil { invalidate() }
+        case .keyUp:
+            if hold.trigger == .shortcut,
+               Int(event.keyCode) == KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar)?.carbonKeyCode {
+                releaseHold(.shortcut)
+            }
+        case .leftMouseDown:
+            guard hold.id != nil else { return }
+            let local = CGPoint(x: NSEvent.mouseLocation.x - floating.panel.frame.minX,
+                                y: NSEvent.mouseLocation.y - floating.panel.frame.minY)
+            if !floating.isPresented || !floating.isInteractive(local) { invalidate() }
+        case .rightMouseDown, .otherMouseDown, .scrollWheel:
+            if hold.id != nil { invalidate() }
+        default: break
         }
-        if event.type == .leftMouseDown {
-            frontChanged(); invalidate()
-            refreshPermissions()
-            let state = ModifierGesture(modifier: store.configuration.preferences.clickModifier,
-                                        flags: event.modifierFlags.rawValue)
-            guard state.valid, !input.isBusy, accessibilityGranted, sessionActive, store.isReady,
-                  store.configuration.preferences.isEnabled, let target,
-                  let profile = profile(for: target), profile.isEnabled,
-                  profile.displayMode == .modifierClick else { return }
-            let id = UUID(), mouse = NSEvent.mouseLocation
-            let top = NSScreen.screens.first?.frame.maxY ?? 0
-            clickGesture = state; gestureID = id
-            gestureCapture = Task { await input.captureGesture(id: id, pid: target.processIdentifier,
-                                                              mouse: mouse, primaryScreenTop: top) }
-        } else if event.type == .leftMouseDragged {
-            clickGesture?.dragged = true
-            clickGesture?.observe(flags: event.modifierFlags.rawValue)
-        } else {
-            guard var state = clickGesture, let id = gestureID, let capture = gestureCapture,
-                  let target, let profile = profile(for: target) else { return }
-            state.observe(flags: event.modifierFlags.rawValue)
-            clickGesture = nil; gestureID = nil; gestureCapture = nil
-            guard state.valid else { return }
-            let version = panelVersion, mouse = NSEvent.mouseLocation
-            Task {
-                guard await capture.value, panelVersion == version else { return }
-                // The editor gets the mouse-up before the AX selection check; never write or alter the selection.
-                try? await Task.sleep(for: .milliseconds(40))
-                guard panelVersion == version,
-                      await input.finishGesture(id: id, pid: target.processIdentifier, state: state),
-                      panelVersion == version,
-                      NSWorkspace.shared.frontmostApplication?.isEqual(target) == true else { return }
-                dismissed = false
-                show(profile, at: mouse)
+    }
+    private func beginHold(_ source: HoldMenuSession.Trigger) {
+        // Duplicate down notifications are harmless; a new trigger after release
+        // invalidates the old pending paste before starting another hold.
+        if hold.trigger == source, hold.phase == .checking || hold.phase == .choosing { return }
+        if hold.id != nil { invalidate() }
+        frontChanged(); refreshPermissions()
+        guard !isRestarting, sessionActive, store.isReady, store.configuration.preferences.isEnabled,
+              authorizationStep == .ready, !input.isBusy, let target,
+              target.bundleIdentifier != Bundle.main.bundleIdentifier,
+              let profile = profile(for: target), profile.isEnabled,
+              source == .shortcut || profile.displayMode == .modifierClick,
+              profile.buttons.contains(where: \.isEnabled),
+              let token = hold.begin(source) else { return }
+        let mouse = NSEvent.mouseLocation
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        let mode = store.configuration.preferences.menuAnchorMode
+        let screens = NSScreen.screens.map(\.visibleFrame)
+        holdTask = Task {
+            let captured = await input.captureTarget(id: token, pid: target.processIdentifier,
+                                                     mouse: mouse, primaryScreenTop: top, mode: mode)
+            guard !Task.isCancelled, hold.isCurrent(token), let captured, captured.id == token, triggerIsHeld(source),
+                  NSWorkspace.shared.frontmostApplication?.isEqual(target) == true else {
+                await input.releaseTarget(token)
+                if hold.isCurrent(token) {
+                    notice = mode == .mouse ? "请先点入普通输入框，并将鼠标放在该输入框内。" : "请先点入普通输入框。"
+                    invalidate()
+                }
+                return
+            }
+            let anchor = MenuAnchor(mode: mode, mouse: mouse, caretBounds: captured.caretBounds,
+                                    primaryScreenTop: top, screens: screens)
+            if anchor.usedMouseFallback { notice = "当前软件未提供有效光标位置，已改用鼠标位置展开。" }
+            guard hold.show(token), floating.show(profile: profile, at: anchor.point,
+                initialMouse: mouse, requiresMovement: mode == .caret) else {
+                notice = floating.failureMessage
+                invalidate(); return
             }
         }
     }
-    private func show(_ profile: AppProfile, at anchor: CGPoint? = nil) {
-        refreshPermissions()
-        guard !isRestarting, sessionActive, store.isReady, store.configuration.preferences.isEnabled,
-              accessibilityGranted, profile.isEnabled, !dismissed, !input.isBusy,
-              profile.buttons.contains(where: \.isEnabled), let target,
-              target.bundleIdentifier != Bundle.main.bundleIdentifier,
-              NSWorkspace.shared.frontmostApplication?.isEqual(target) == true else { floating.hide(); return }
-        let version = panelVersion
-        let mouse = anchor ?? NSEvent.mouseLocation
-        Task {
-            guard await input.canShowMenu(pid: target.processIdentifier),
-                  panelVersion == version, !input.isBusy, !dismissed,
-                  NSWorkspace.shared.frontmostApplication?.isEqual(target) == true else { return }
-            panelVersion += 1
-            floating.show(profile: profile, at: mouse)
+    private func triggerIsHeld(_ source: HoldMenuSession.Trigger) -> Bool {
+        let flags = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift])
+        if source == .modifier {
+            return flags.rawValue == store.configuration.preferences.clickModifier.mask
         }
+        guard let shortcut = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar) else { return false }
+        return flags == shortcut.modifiers.intersection([.command, .option, .control, .shift]) &&
+            CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(shortcut.carbonKeyCode))
     }
-    @objc func togglePanel() {
-        if floating.isPresented { dismissed = true; invalidate(); return }
-        target = NSWorkspace.shared.frontmostApplication; dismissed = false
-        guard let target, let profile = profile(for: target) else { notice = "当前应用尚未添加，请先在 PhrasePerch 中添加。"; return }
-        show(profile)
+    private func releaseHold(_ source: HoldMenuSession.Trigger) {
+        guard hold.trigger == source, hold.phase == .checking || hold.phase == .choosing else { return }
+        let selected = floating.updateSelection(at: NSEvent.mouseLocation)
+        let captured = hold.id
+        guard let token = hold.release(source, selection: selected), let selected,
+              let target, let profile = profile(for: target),
+              let snippet = profile.buttons.first(where: { $0.id == selected && $0.isEnabled }) else {
+            invalidate()
+            if let captured { Task { await input.releaseTarget(captured) } }
+            return
+        }
+        floating.hide()
+        holdTask?.cancel()
+        holdTask = Task {
+            let released = await waitForModifierRelease(
+                released: { NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty },
+                current: { self.hold.isCurrent(token) })
+            guard released else {
+                if hold.isCurrent(token) { notice = "修饰键尚未松开，已取消粘贴。"; invalidate() }
+                return
+            }
+            guard !Task.isCancelled, hold.commit(token) else { return }
+            _ = await input.insert(snippet, target: target, sessionID: token)
+            if hold.isCurrent(token) {
+                notice = input.message
+                hold.cancel(); holdTask = nil
+            }
+        }
     }
     @objc private func toggleEnabled() { store.configuration.preferences.isEnabled.toggle(); invalidate() }
 
@@ -405,25 +470,6 @@ final class AppCoordinator: NSObject {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
         panel.treatsFilePackagesAsDirectories = false; panel.allowsMultipleSelection = true
         if panel.runModal() == .OK { panel.urls.forEach(addApplication) }
-    }
-    private func insert(_ id: UUID) {
-        guard !isRestarting, !input.isBusy, let target, let profile = profile(for: target), profile.isEnabled,
-              store.configuration.preferences.isEnabled,
-              let snippet = profile.buttons.first(where: { $0.id == id && $0.isEnabled }) else { return }
-        guard NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else {
-            floating.updateStatus("请先松开修饰键", busy: false)
-            return
-        }
-        floating.updateStatus("正在输入…", busy: true)
-        let versionOfPanel = panelVersion
-        Task {
-            let result = await input.insert(snippet, target: target)
-            notice = input.message
-            if panelVersion == versionOfPanel { floating.updateStatus(input.message, busy: false) }
-            if panelVersion == versionOfPanel && result.closesMenu && floating.isPresented {
-                floating.hide()
-            }
-        }
     }
     @objc func openSettings() {
         invalidate()
@@ -464,6 +510,7 @@ final class AppCoordinator: NSObject {
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         for (center, token) in observers { center.removeObserver(token) }
+        KeyboardShortcuts.removeHandler(for: .toggleFloatingInputBar)
         KeyboardShortcuts.disable(.toggleFloatingInputBar)
     }
 }

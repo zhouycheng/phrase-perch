@@ -36,8 +36,36 @@ func pasteKeyEvents() -> (CGEvent, CGEvent)? {
 }
 
 // AX references stay inside this actor; no CF object crosses an isolation boundary.
-actor AXWorker {
-    private var gesture: (id: UUID, pid: pid_t, editor: AXUIElement)?
+struct CapturedInputTarget: Equatable, Sendable {
+    let id: UUID
+    let caretBounds: CGRect? // AX screen coordinates; the retained element stays inside AXWorker.
+}
+
+struct MenuAnchor: Equatable {
+    let point: CGPoint
+    let usedMouseFallback: Bool
+    init(mode: MenuAnchorMode, mouse: CGPoint, caretBounds: CGRect?, primaryScreenTop: CGFloat, screens: [CGRect]) {
+        if mode == .caret, let rect = caretBounds,
+           rect.origin.x.isFinite, rect.origin.y.isFinite, rect.width.isFinite, rect.height.isFinite,
+           rect.width >= 0, rect.height > 0 {
+            let candidate = flippedScreenPoint(CGPoint(x: rect.midX, y: rect.midY), primaryScreenTop: primaryScreenTop)
+            if screens.contains(where: { $0.contains(candidate) }) {
+                point = candidate; usedMouseFallback = false; return
+            }
+        }
+        point = mouse; usedMouseFallback = mode == .caret
+    }
+}
+
+protocol InputTargetWorker: Sendable {
+    func captureTarget(id: UUID, pid: pid_t, position: CGPoint, mode: MenuAnchorMode) async -> CapturedInputTarget?
+    func prepareCaptured(pid: pid_t, operationID: UUID) async throws -> PreparedInput
+    func readyToPaste(_ id: UUID) async -> Bool
+    func readback(_ id: UUID) async -> String?
+    func release(_ id: UUID) async
+}
+
+actor AXWorker: InputTargetWorker {
     private var element: AXUIElement?
     private var operationID: UUID?
     private var pid: pid_t = 0
@@ -81,9 +109,28 @@ actor AXWorker {
             throw InputFailure("无法确认当前控件可编辑")
         }
     }
-    func captureGesture(id: UUID, pid: pid_t, position: CGPoint) -> Bool {
-        gesture = nil
-        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled() else { return false }
+    private func caretBounds(_ editor: AXUIElement, selection: NSRange) -> CGRect? {
+        guard selection.length <= Int.max - selection.location else { return nil }
+        var range = CFRange(location: selection.location + selection.length, length: 0)
+        guard let parameter = AXValueCreate(.cfRange, &range) else { return nil }
+        var result: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(editor, kAXBoundsForRangeParameterizedAttribute as CFString,
+                                                        parameter, &result) == .success,
+              let result, CFGetTypeID(result) == AXValueGetTypeID() else { return nil }
+        let ax = unsafeDowncast(result, to: AXValue.self)
+        var rect = CGRect.zero
+        guard AXValueGetType(ax) == .cgRect, AXValueGetValue(ax, .cgRect, &rect) else { return nil }
+        return rect
+    }
+    func captureTarget(id: UUID, pid: pid_t, position: CGPoint, mode: MenuAnchorMode) -> CapturedInputTarget? {
+        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled(), let editor = focused(pid),
+              (try? validateEditor(editor)) != nil, let selection = selectedRange(editor) else { return nil }
+        if mode == .mouse && !mouseHitsEditor(editor, pid: pid, position: position) { return nil }
+        // Retain the input before showing a panel; never recapture at release.
+        element = editor; self.pid = pid; operationID = id; originalSelection = selection
+        return CapturedInputTarget(id: id, caretBounds: mode == .caret ? caretBounds(editor, selection: selection) : nil)
+    }
+    private func mouseHitsEditor(_ editor: AXUIElement, pid: pid_t, position: CGPoint) -> Bool {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.4)
         var hit: AXUIElement?
@@ -91,8 +138,7 @@ actor AXWorker {
         for _ in 0..<8 {
             guard let node = hit else { break }
             AXUIElementSetMessagingTimeout(node, 0.4)
-            if (try? validateEditor(node)) != nil {
-                gesture = (id, pid, node)
+            if CFEqual(node, editor) {
                 return true
             }
             guard let parent = value(node, kAXParentAttribute as CFString),
@@ -101,27 +147,12 @@ actor AXWorker {
         }
         return false
     }
-    func finishGesture(id: UUID, pid: pid_t, state: ModifierGesture) -> Bool {
-        guard let captured = gesture, captured.id == id else { return false }
-        defer { gesture = nil }
-        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled(), captured.pid == pid,
-              let current = focused(pid), (try? validateEditor(current)) != nil else { return false }
-        return state.acceptsEditor(sameEditor: CFEqual(captured.editor, current),
-                                   selectionLength: selectedRange(current)?.length)
-    }
-    func canShowMenu(pid: pid_t) -> Bool {
-        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled(), let target = focused(pid),
-              (try? validateEditor(target)) != nil else { return false }
-        return true
-    }
-    func prepare(pid: pid_t, operationID: UUID) throws -> PreparedInput {
-        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled(), let target = focused(pid) else {
-            throw InputFailure("请授权辅助功能，并将光标放到普通输入位置")
+    func prepareCaptured(pid: pid_t, operationID: UUID) throws -> PreparedInput {
+        guard self.pid == pid, readyToPaste(operationID), let element else {
+            throw InputFailure("原输入框、选区或权限已变化，已取消粘贴")
         }
-        self.element = target; self.pid = pid; self.operationID = operationID
-        try validateEditor(target)
-        originalSelection = selectedRange(target)
-        return PreparedInput(before: value(target, kAXValueAttribute as CFString) as? String,
+        try validateEditor(element)
+        return PreparedInput(before: value(element, kAXValueAttribute as CFString) as? String,
                              selection: originalSelection)
     }
     func isFocused(_ id: UUID) -> Bool {
@@ -131,7 +162,7 @@ actor AXWorker {
     }
     func readyToPaste(_ id: UUID) -> Bool {
         guard let element, isFocused(id) else { return false }
-        return selectedRange(element) == originalSelection
+        return (try? validateEditor(element)) != nil && selectedRange(element) == originalSelection
     }
     func readback(_ id: UUID) -> String? {
         guard id == operationID, let element, isFocused(id) else { return nil }
@@ -142,56 +173,72 @@ actor AXWorker {
     }
 }
 
+// Injectable system boundary: tests exercise the real insertion flow without
+// posting keys or touching the user's clipboard.
+@MainActor
+struct PasteEnvironment {
+    var targetIsCurrent: (NSRunningApplication) -> Bool = {
+        !$0.isTerminated && NSWorkspace.shared.frontmostApplication?.isEqual($0) == true
+    }
+    var modifiersReleased: () -> Bool = {
+        NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+    }
+    var authorized: () -> Bool = { CGPreflightPostEventAccess() && !IsSecureEventInputEnabled() }
+    var copy: (String) throws -> Int = { try copySnippetToClipboard($0) }
+    var clipboardRevision: () -> Int = { NSPasteboard.general.changeCount }
+    var dispatch: () -> Bool = {
+        guard let (down, up) = pasteKeyEvents() else { return false }
+        down.post(tap: .cgSessionEventTap); up.post(tap: .cgSessionEventTap)
+        return true
+    }
+}
+
 @MainActor @Observable
 final class TextInsertionService {
     private(set) var isBusy = false
     private(set) var message = ""
     private(set) var lastResult: InsertionResult?
     private var gate = OperationGate()
-    private let worker = AXWorker()
+    private let worker: any InputTargetWorker
+    private let environment: PasteEnvironment
     private let log = Logger(subsystem: "local.FloatingInputBar", category: "input")
 
+    init(worker: any InputTargetWorker = AXWorker(), environment: PasteEnvironment = PasteEnvironment()) {
+        self.worker = worker; self.environment = environment
+    }
     func cancel() { gate.invalidate() }
-
-    func captureGesture(id: UUID, pid: pid_t, mouse: CGPoint, primaryScreenTop: CGFloat) async -> Bool {
-        await worker.captureGesture(id: id, pid: pid,
-            position: flippedScreenPoint(mouse, primaryScreenTop: primaryScreenTop))
-    }
-    func finishGesture(id: UUID, pid: pid_t, state: ModifierGesture) async -> Bool {
-        await worker.finishGesture(id: id, pid: pid, state: state)
+    func releaseTarget(_ id: UUID) async { await worker.release(id) }
+    func captureTarget(id: UUID, pid: pid_t, mouse: CGPoint, primaryScreenTop: CGFloat,
+                       mode: MenuAnchorMode = .mouse) async -> CapturedInputTarget? {
+        await worker.captureTarget(id: id, pid: pid,
+            position: flippedScreenPoint(mouse, primaryScreenTop: primaryScreenTop), mode: mode)
     }
 
-    func canShowMenu(pid: pid_t) async -> Bool {
-        await worker.canShowMenu(pid: pid)
-    }
-
-    func insert(_ snippet: Snippet, target: NSRunningApplication) async -> InsertionResult {
+    func insert(_ snippet: Snippet, target: NSRunningApplication, sessionID: UUID) async -> InsertionResult {
         guard let id = gate.begin() else { return .notWritten }
         let generation = gate.generation
         isBusy = true; message = "正在输入…"; lastResult = nil
         var result = InsertionResult.notWritten
         var clipboardRevision: Int?
         func current() -> Bool {
-            gate.isCurrent(id, generation: generation) && !target.isTerminated &&
-            NSWorkspace.shared.frontmostApplication?.isEqual(target) == true
+            gate.isCurrent(id, generation: generation) && environment.targetIsCurrent(target)
         }
         do {
             try validateSnippet(snippet)
             guard current() else { throw InputFailure("目标应用已切换") }
-            guard NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else {
+            guard environment.modifiersReleased() else {
                 throw InputFailure("请松开修饰键后重试")
             }
-            clipboardRevision = try copySnippetToClipboard(snippet.text)
-            guard CGPreflightPostEventAccess() else { throw InputFailure("粘贴权限未就绪") }
-            let prepared = try await worker.prepare(pid: target.processIdentifier, operationID: id)
-            guard current(), await worker.readyToPaste(id), current() else { throw InputFailure("输入焦点或选区已变化") }
-            guard let (down, up) = pasteKeyEvents(), CGPreflightPostEventAccess(), !IsSecureEventInputEnabled(),
-                  NSPasteboard.general.changeCount == clipboardRevision,
-                  NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else {
+            guard environment.authorized() else { throw InputFailure("粘贴权限未就绪") }
+            let prepared = try await worker.prepareCaptured(pid: target.processIdentifier, operationID: sessionID)
+            guard current(), await worker.readyToPaste(sessionID), current() else { throw InputFailure("输入焦点或选区已变化") }
+            clipboardRevision = try environment.copy(snippet.text)
+            guard await worker.readyToPaste(sessionID), current(), environment.authorized(), environment.clipboardRevision() == clipboardRevision,
+                  environment.modifiersReleased() else {
                 throw InputFailure("粘贴前剪贴板或权限已变化")
             }
+            guard environment.dispatch() else { throw InputFailure("无法创建粘贴事件") }
             gate.markWriting(id)
-            down.post(tap: .cgSessionEventTap); up.post(tap: .cgSessionEventTap)
             result = .dispatchedUnverified
             if !current(), gate.mayHaveMutated { result = .interruptedAfterDispatch }
             if result == .dispatchedUnverified, let before = prepared.before, let range = prepared.selection,
@@ -199,7 +246,7 @@ final class TextInsertionService {
                 var partial: InsertionResult?
                 for _ in 0..<3 {
                     guard current() else { result = .interruptedAfterDispatch; break }
-                    if let after = await worker.readback(id), current(),
+                    if let after = await worker.readback(sessionID), current(),
                        let verified = verifyInsertion(before: before, range: range, text: snippet.text, after: after) {
                         if verified == .insertedVerified { result = verified; break }
                         partial = verified
@@ -216,7 +263,7 @@ final class TextInsertionService {
                 message = "未自动粘贴：\(error.localizedDescription)。文案已复制。"
             } else { message = gate.mayHaveMutated ? result.message : error.localizedDescription }
         }
-        await worker.release(id)
+        await worker.release(sessionID)
         gate.finish(id); isBusy = false; lastResult = result
         log.info("Input ended result=\(result.rawValue, privacy: .public)")
         return result
