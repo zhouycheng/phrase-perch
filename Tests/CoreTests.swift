@@ -24,6 +24,8 @@ final class CoreTests: XCTestCase {
         defer { first.close(); coordinator.stop() }
         XCTAssertTrue(first.titleVisibility == .visible)
         XCTAssertFalse(first.styleMask.contains(.fullSizeContentView))
+        XCTAssertEqual(first.contentView?.bounds.size, CGSize(width: 960, height: 620))
+        XCTAssertEqual(first.contentMinSize, CGSize(width: 880, height: 560))
         coordinator.openSettings()
         XCTAssertEqual(NSApp.windows.filter { $0.title == first.title }.count, 1)
         first.close()
@@ -32,31 +34,147 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(reopened === first)
         XCTAssertTrue(reopened.isVisible)
     }
-    func testPerApplicationEnableAndExclusiveTriggerChoice() throws {
-        var modifierProfile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.modifier", fallbackBundlePath: nil),
-            displayName: "Modifier", buttons: [Snippet(title: "文案", text: "正文")])
-        var shortcutProfile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.shortcut", fallbackBundlePath: nil),
-            displayName: "Shortcut", displayMode: .shortcutOnly, buttons: modifierProfile.buttons)
-        shortcutProfile.buttons[0].id = UUID()
-        XCTAssertTrue(modifierProfile.canTrigger(.modifier))
-        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
-        XCTAssertFalse(shortcutProfile.canTrigger(.modifier))
-        XCTAssertTrue(shortcutProfile.canTrigger(.shortcut))
-        modifierProfile.isEnabled = false
-        XCTAssertFalse(modifierProfile.canTrigger(.modifier))
-        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
-        XCTAssertTrue(shortcutProfile.canTrigger(.shortcut))
-        modifierProfile.displayMode = .shortcutOnly
-        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
-        modifierProfile.isEnabled = true
-        XCTAssertTrue(modifierProfile.canTrigger(.shortcut))
-        XCTAssertFalse(modifierProfile.canTrigger(.modifier))
-        shortcutProfile.buttons[0].isEnabled = false
-        XCTAssertFalse(shortcutProfile.canTrigger(.shortcut))
-        let configuration = AppConfiguration(profiles: [modifierProfile, shortcutProfile])
-        let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(configuration))
-        XCTAssertEqual(decoded, configuration)
-        XCTAssertEqual(try JSONDecoder().decode(DisplayMode.self, from: Data("\"modifierClick\"".utf8)), .modifierClick)
+    func testEditorColumnsAndRingFitEverySupportedCount() {
+        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+                     CGSize(width: 1280, height: 800)] {
+            let columns = EditorColumns(width: size.width)
+            XCTAssertEqual(EditorColumns.navigation + columns.sidebar + columns.ring + columns.editor + 3, size.width, accuracy: 0.001)
+            XCTAssertGreaterThanOrEqual(columns.sidebar, 190)
+            XCTAssertGreaterThanOrEqual(columns.editor, 260)
+            XCTAssertLessThanOrEqual(columns.editor, 420)
+            let area = CGSize(width: columns.ring, height: size.height - 112)
+            for count in 1...8 {
+                let layout = EditorRingLayout(size: area, count: count)
+                XCTAssertEqual(layout.items.count, count)
+                XCTAssertEqual(layout.items.first?.midX ?? 0, area.width / 2, accuracy: 0.001)
+                let gaps = layout.items.enumerated().map { index, rect in
+                    EditorRingLayout.edgeGap(rect, layout.items[(index + 1) % count])
+                }
+                if count > 2 {
+                    XCTAssertLessThan((gaps.max() ?? 0) - (gaps.min() ?? 0), 0.01,
+                                      "Unequal visible spacing at \(size), count \(count)")
+                }
+                for (index, rect) in layout.items.enumerated() {
+                    XCTAssertTrue(CGRect(origin: .zero, size: area).contains(rect))
+                    for other in layout.items.dropFirst(index + 1) {
+                        XCTAssertFalse(rect.insetBy(dx: -3, dy: -3).intersects(other.insetBy(dx: -3, dy: -3)),
+                                       "Overlap at \(size), count \(count)")
+                    }
+                }
+            }
+        }
+        let compressed = EditorRingLayout(size: CGSize(width: 408, height: 272), count: 8)
+        for (index, rect) in compressed.items.enumerated() {
+            XCTAssertTrue(CGRect(x: 0, y: 0, width: 408, height: 272).contains(rect))
+            XCTAssertFalse(compressed.items.dropFirst(index + 1).contains { rect.insetBy(dx: -3, dy: -3).intersects($0) })
+        }
+        XCTAssertTrue(EditorRingLayout(size: CGSize(width: 458, height: 508), count: 0).items.isEmpty)
+        XCTAssertEqual(EditorColumns(width: 1600).editor, 420)
+    }
+
+    func testEditorSelectionPaginationDeletionReorderAndPerAppMemory() {
+        var ids = (0..<17).map { _ in UUID() }
+        var session = SnippetEditorSession()
+        session.reconcile(ids)
+        XCTAssertEqual(session.selectedID, ids[0])
+        XCTAssertEqual(SnippetEditorSession.pageCount(0), 1)
+        XCTAssertEqual(SnippetEditorSession.pageCount(8), 1)
+        XCTAssertEqual(SnippetEditorSession.pageCount(9), 2)
+        XCTAssertEqual(SnippetEditorSession.pageCount(17), 3)
+        session.select(ids[16], in: ids)
+        XCTAssertEqual(session.page, 2)
+        ids.removeLast()
+        session.deleted(at: 16, remaining: ids)
+        XCTAssertEqual(session.selectedID, ids[15])
+        XCTAssertEqual(session.page, 1)
+        session.showPage(0, in: ids)
+        XCTAssertEqual(session.selectedID, ids[0])
+        session.select(ids[7], in: ids)
+        let selected = ids[7]
+        ids.swapAt(7, 8)
+        session.reconcile(ids)
+        XCTAssertEqual(session.selectedID, selected)
+        XCTAssertEqual(session.page, 1)
+        let appA = UUID(), appB = UUID()
+        var sessions = [appA: session, appB: SnippetEditorSession()]
+        sessions[appB]?.reconcile([UUID()])
+        XCTAssertEqual(sessions[appA], session)
+        session.reconcile([])
+        XCTAssertNil(session.selectedID)
+        XCTAssertEqual(session.page, 0)
+    }
+
+    @MainActor
+    func testEditorNativeScreenshotsAtThreeWindowSizesAndCounts() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationStore(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(store.isReady)
+        let coordinator = AppCoordinator(authorization: AuthorizationEnvironment(), store: store)
+        defer { coordinator.stop() }
+        for count in [0, 1, 4, 8, 9, 17] {
+            let snippets = (0..<count).map { index in
+                Snippet(title: index == 1 ? "这是一条很长的文案标题用于验证截断" : "文案\(index + 1)",
+                        text: String(repeating: "这是粘贴内容，用于验证正文编辑和滚动。\n", count: 40),
+                        isEnabled: index != 2)
+            }
+            store.configuration.profiles = [
+                AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview.chatgpt", fallbackBundlePath: nil),
+                           displayName: "ChatGPT", lastKnownBundlePath: "/Applications/ChatGPT.app", buttons: snippets),
+                AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview.textedit", fallbackBundlePath: nil),
+                           displayName: "TextEdit", lastKnownBundlePath: "/System/Applications/TextEdit.app")
+            ]
+            for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+                         CGSize(width: 1280, height: 800)] {
+                let root = NSHostingView(rootView: SettingsView(coordinator: coordinator))
+                let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled],
+                                      backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = root
+                // Render the native view tree without ordering a window onto the user's desktop.
+                root.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(80))
+                try savePreview(root, name: "editor-\(Int(size.width))-\(count).png")
+                XCTAssertEqual(root.bounds.size.width, size.width, accuracy: 1)
+                XCTAssertEqual(root.bounds.size.height, size.height, accuracy: 1)
+                window.close()
+            }
+            if count > 8 {
+                let profile = store.configuration.profiles[0]
+                var selection = SnippetEditorSession()
+                selection.select(profile.buttons.last?.id, in: profile.buttons.map(\.id))
+                let root = NSHostingView(rootView: ProfileEditor(profile: .constant(profile), session: .constant(selection),
+                    editorWidth: 300).background(Color(red: 23 / 255, green: 23 / 255, blue: 23 / 255)))
+                root.frame = CGRect(x: 0, y: 0, width: 759, height: 620)
+                root.appearance = NSAppearance(named: .darkAqua)
+                try savePreview(root, name: "editor-last-page-\(count).png")
+            }
+        }
+        for page in [MainPage.settings, .about] {
+            for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+                         CGSize(width: 1280, height: 800)] {
+                let root = NSHostingView(rootView: SettingsView(coordinator: coordinator, initialPage: page))
+                let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled],
+                                      backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = root
+                root.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(80))
+                try savePreview(root, name: "page-\(page)-\(Int(size.width)).png")
+                XCTAssertEqual(root.bounds.size.width, size.width, accuracy: 1)
+                XCTAssertEqual(root.bounds.size.height, size.height, accuracy: 1)
+                window.close()
+            }
+        }
+        store.configuration.profiles = []
+        let root = NSHostingView(rootView: SettingsView(coordinator: coordinator))
+        root.frame = CGRect(x: 0, y: 0, width: 960, height: 620)
+        try savePreview(root, name: "editor-empty-apps.png")
+        let saved = await store.flush()
+        XCTAssertTrue(saved)
     }
 
     @MainActor
@@ -96,6 +214,87 @@ final class CoreTests: XCTestCase {
         await store.restoreBackup()
         XCTAssertEqual(store.configuration.profiles[0].buttons[0].title, "第一条")
         XCTAssertEqual(store.saveStatus, "已保存")
+    }
+
+    func testPerApplicationEnableAndExclusiveTriggerChoice() throws {
+        var modifierProfile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.modifier", fallbackBundlePath: nil),
+            displayName: "Modifier", buttons: [Snippet(title: "文案", text: "正文")])
+        var shortcutProfile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.shortcut", fallbackBundlePath: nil),
+            displayName: "Shortcut", displayMode: .shortcutOnly, buttons: modifierProfile.buttons)
+        shortcutProfile.buttons[0].id = UUID()
+        XCTAssertTrue(modifierProfile.canTrigger(.modifier))
+        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
+        XCTAssertFalse(shortcutProfile.canTrigger(.modifier))
+        XCTAssertTrue(shortcutProfile.canTrigger(.shortcut))
+        modifierProfile.isEnabled = false
+        XCTAssertFalse(modifierProfile.canTrigger(.modifier))
+        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
+        XCTAssertTrue(shortcutProfile.canTrigger(.shortcut))
+        modifierProfile.displayMode = .shortcutOnly
+        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
+        modifierProfile.isEnabled = true
+        XCTAssertTrue(modifierProfile.canTrigger(.shortcut))
+        XCTAssertFalse(modifierProfile.canTrigger(.modifier))
+        shortcutProfile.buttons[0].isEnabled = false
+        XCTAssertFalse(shortcutProfile.canTrigger(.shortcut))
+        let configuration = AppConfiguration(profiles: [modifierProfile, shortcutProfile])
+        let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(configuration))
+        XCTAssertEqual(decoded, configuration)
+        XCTAssertEqual(try JSONDecoder().decode(DisplayMode.self, from: Data("\"modifierClick\"".utf8)), .modifierClick)
+    }
+
+    func testSnippetDeletionRequiresConfirmationAndRetainsCorrectSelection() {
+        var profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.deletion", fallbackBundlePath: nil),
+            displayName: "Delete", buttons: (0..<17).map { Snippet(title: "文案\($0)", text: "正文") })
+        let original = profile
+        var session = SnippetEditorSession()
+        session.select(profile.buttons[8].id, in: profile.buttons.map(\.id))
+        var deletion = SnippetDeletion()
+        let target = profile.buttons[8].id, adjacent = profile.buttons[9].id
+        deletion.request(target)
+        XCTAssertEqual(profile, original, "A deletion request must not modify the profile")
+        deletion.cancel()
+        XCTAssertNil(deletion.id)
+        XCTAssertEqual(profile, original)
+        deletion.request(target)
+        // SwiftUI can clear presentation state while dismissing the confirmation.
+        // The confirmed alert payload must still identify the original item.
+        deletion.cancel()
+        deletion.confirm(target, profile: &profile, session: &session)
+        XCTAssertEqual(profile.buttons.count, 16)
+        XCTAssertFalse(profile.buttons.contains { $0.id == target })
+        XCTAssertEqual(session.selectedID, adjacent)
+        XCTAssertEqual(session.page, 1)
+        XCTAssertNil(deletion.id)
+        let remaining = profile
+        deletion.request(target)
+        deletion.confirm(target, profile: &profile, session: &session)
+        XCTAssertEqual(profile, remaining, "A stale confirmation must not remove a different item")
+        profile.buttons = [profile.buttons[0]]
+        session.reconcile(profile.buttons.map(\.id))
+        let lastID = profile.buttons[0].id
+        deletion.request(lastID)
+        deletion.confirm(lastID, profile: &profile, session: &session)
+        XCTAssertTrue(profile.buttons.isEmpty)
+        XCTAssertNil(session.selectedID)
+        XCTAssertEqual(session.page, 0)
+    }
+
+    func testSelectedCapsuleDeletionControlFitsAtEveryNormalWindowSize() {
+        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+                     CGSize(width: 1280, height: 800)] {
+            let area = CGSize(width: EditorColumns(width: size.width).ring, height: size.height - 112)
+            for count in 1...8 {
+                let layout = EditorRingLayout(size: area, count: count)
+                for (index, item) in layout.items.enumerated() {
+                    let deletion = CGRect(x: item.midX - 30, y: item.maxY + 4, width: 60, height: 20)
+                    XCTAssertTrue(CGRect(origin: .zero, size: area).contains(deletion))
+                    for (otherIndex, other) in layout.items.enumerated() where index != otherIndex {
+                        XCTAssertFalse(deletion.intersects(other), "Delete control overlaps another capsule")
+                    }
+                }
+            }
+        }
     }
 
     func testExclusiveAppLockAndRelease() throws {

@@ -475,14 +475,15 @@ final class AppCoordinator: NSObject {
         invalidate()
         refreshPermissions()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1180, height: 780),
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 960, height: 620),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "PhrasePerch"
             window.titleVisibility = .visible
             window.isReleasedWhenClosed = false
             window.contentViewController = NSHostingController(rootView: SettingsView(coordinator: self))
-            window.setContentSize(CGSize(width: 1180, height: 780))
-            window.minSize = CGSize(width: 900, height: 600); window.center(); settingsWindow = window
+            window.setContentSize(CGSize(width: 960, height: 620))
+            window.contentMinSize = CGSize(width: 880, height: 560);
+            window.backgroundColor = NSColor(calibratedWhite: 23 / 255, alpha: 1); window.center(); settingsWindow = window
         }
         NSApp.activate(ignoringOtherApps: true); settingsWindow?.makeKeyAndOrderFront(nil)
     }
