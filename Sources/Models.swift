@@ -102,6 +102,14 @@ struct AppProfile: Codable, Identifiable, Equatable, Sendable {
     var isEnabled = true
     var displayMode = DisplayMode.modifierClick
     var buttons: [Snippet] = []
+
+    func canTrigger(_ source: HoldMenuSession.Trigger) -> Bool {
+        guard isEnabled, buttons.contains(where: \.isEnabled) else { return false }
+        switch displayMode {
+        case .modifierClick: return source == .modifier
+        case .shortcutOnly: return source == .shortcut
+        }
+    }
 }
 
 enum MenuAnchorMode: String, Codable, CaseIterable, Sendable {

@@ -383,9 +383,7 @@ final class AppCoordinator: NSObject {
         guard !isRestarting, sessionActive, store.isReady, store.configuration.preferences.isEnabled,
               authorizationStep == .ready, !input.isBusy, let target,
               target.bundleIdentifier != Bundle.main.bundleIdentifier,
-              let profile = profile(for: target), profile.isEnabled,
-              source == .shortcut || profile.displayMode == .modifierClick,
-              profile.buttons.contains(where: \.isEnabled),
+              let profile = profile(for: target), profile.canTrigger(source),
               let token = hold.begin(source) else { return }
         let mouse = NSEvent.mouseLocation
         let top = NSScreen.screens.first?.frame.maxY ?? 0
@@ -427,7 +425,7 @@ final class AppCoordinator: NSObject {
         let selected = floating.updateSelection(at: NSEvent.mouseLocation)
         let captured = hold.id
         guard let token = hold.release(source, selection: selected), let selected,
-              let target, let profile = profile(for: target),
+              let target, let profile = profile(for: target), profile.canTrigger(source),
               let snippet = profile.buttons.first(where: { $0.id == selected && $0.isEnabled }) else {
             invalidate()
             if let captured { Task { await input.releaseTarget(captured) } }

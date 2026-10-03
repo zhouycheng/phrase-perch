@@ -32,6 +32,33 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(reopened === first)
         XCTAssertTrue(reopened.isVisible)
     }
+    func testPerApplicationEnableAndExclusiveTriggerChoice() throws {
+        var modifierProfile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.modifier", fallbackBundlePath: nil),
+            displayName: "Modifier", buttons: [Snippet(title: "文案", text: "正文")])
+        var shortcutProfile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.shortcut", fallbackBundlePath: nil),
+            displayName: "Shortcut", displayMode: .shortcutOnly, buttons: modifierProfile.buttons)
+        shortcutProfile.buttons[0].id = UUID()
+        XCTAssertTrue(modifierProfile.canTrigger(.modifier))
+        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
+        XCTAssertFalse(shortcutProfile.canTrigger(.modifier))
+        XCTAssertTrue(shortcutProfile.canTrigger(.shortcut))
+        modifierProfile.isEnabled = false
+        XCTAssertFalse(modifierProfile.canTrigger(.modifier))
+        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
+        XCTAssertTrue(shortcutProfile.canTrigger(.shortcut))
+        modifierProfile.displayMode = .shortcutOnly
+        XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
+        modifierProfile.isEnabled = true
+        XCTAssertTrue(modifierProfile.canTrigger(.shortcut))
+        XCTAssertFalse(modifierProfile.canTrigger(.modifier))
+        shortcutProfile.buttons[0].isEnabled = false
+        XCTAssertFalse(shortcutProfile.canTrigger(.shortcut))
+        let configuration = AppConfiguration(profiles: [modifierProfile, shortcutProfile])
+        let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(configuration))
+        XCTAssertEqual(decoded, configuration)
+        XCTAssertEqual(try JSONDecoder().decode(DisplayMode.self, from: Data("\"modifierClick\"".utf8)), .modifierClick)
+    }
+
     func testExclusiveAppLockAndRelease() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
