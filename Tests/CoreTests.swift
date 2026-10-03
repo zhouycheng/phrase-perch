@@ -4,6 +4,11 @@ import Darwin
 @testable import PhrasePerch
 
 final class CoreTests: XCTestCase {
+    private func requireVisibleUITests() throws {
+        guard ProcessInfo.processInfo.environment["PHRASEPERCH_VISIBLE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Visible desktop tests require explicit PHRASEPERCH_VISIBLE_UI_TESTS=1")
+        }
+    }
     private func previewDirectory() throws -> URL {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent(".build/previews", isDirectory: true)
@@ -12,6 +17,7 @@ final class CoreTests: XCTestCase {
     }
     @MainActor
     func testSettingsWindowIsReusedAfterRepeatedOpenAndClose() throws {
+        try requireVisibleUITests()
         let coordinator = AppCoordinator()
         coordinator.openSettings()
         let first = try XCTUnwrap(NSApp.windows.first { $0.title == "PhrasePerch" })
@@ -192,6 +198,7 @@ final class CoreTests: XCTestCase {
     }
     @MainActor
     private func unobstructedTestPoint(controller: FloatingPanelController, profile: AppProfile) throws -> CGPoint {
+        try requireVisibleUITests()
         let screen = try XCTUnwrap(NSScreen.screens.first)
         let visible = screen.visibleFrame
         for point in [CGPoint(x: visible.minX + 200, y: visible.minY + 180),

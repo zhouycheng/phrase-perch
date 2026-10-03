@@ -58,6 +58,8 @@ xcodebuild -project PhrasePerch.xcodeproj -scheme PhrasePerch \
   -derivedDataPath .build build
 ```
 
+默认测试使用离屏渲染，不会在桌面展示测试窗口或快捷菜单。窗口复用、菜单动画和连续开合测试默认跳过；需要专门验证这些可见行为时，在 Xcode 的测试 Scheme 中设置 `PHRASEPERCH_VISIBLE_UI_TESTS=1` 后运行。
+
 项目结构：
 
 ```text
