@@ -65,9 +65,18 @@ xcodebuild -project PhrasePerch.xcodeproj -scheme PhrasePerch \
 ```text
 PhrasePerch.xcodeproj/ Xcode macOS 应用工程
 Info.plist             macOS 应用信息
-Sources/               AppKit、SwiftUI 与输入逻辑
+Sources/App/           启动、依赖组装与生命周期
+Sources/Domain/        数据模型、规则与状态机
+Sources/Features/      按功能组织的 View、ViewModel、布局与动画
+Sources/Services/      编辑、权限、触发与文本插入服务
+Sources/Persistence/   配置状态、文件存储与备份
+Sources/Platform/      macOS 系统能力适配
+Sources/Shared/        可复用组件与样式
+Tests/                 分层回归测试与原生预览
 Resources/             应用图标与第三方许可
 ```
+
+架构和职责说明见 [架构文档](ARCHITECTURE.md)。
 
 ## 许可证
 

@@ -4,8 +4,15 @@
 
 PhrasePerch is a Swift 6 macOS application using SwiftUI and AppKit.
 
-- `Sources/`: application code. `AppCoordinator.swift` manages windows, triggers, and permissions; `SettingsView.swift` contains the main application UI; `FloatingPanel.swift` renders the runtime menu; `TextInsertionService.swift` handles capture and paste; `Models.swift` and `ConfigurationStore.swift` define configuration and persistence.
-- `Tests/CoreTests.swift`: XCTest regression tests and native preview generation.
+- `Sources/App/`: application bootstrap, dependency composition, and lifecycle.
+- `Sources/Domain/`: configuration models, business rules, and state machines.
+- `Sources/Features/`: feature-specific Views, ViewModels, components, layouts, window controllers, and animation.
+- `Sources/Services/`: editing, preferences, authorization, trigger sessions, and insertion workflows.
+- `Sources/Persistence/`: the observable configuration repository, storage protocol, JSON actor, and entry preferences.
+- `Sources/Platform/macOS/`: native system APIs and platform adapters.
+- `Sources/Shared/`: reusable presentation components and styling.
+- `Tests/`: Domain, ViewModels, Services, Persistence, Presentation, and Support suites.
+- `ARCHITECTURE.md`: ownership, dependency boundaries, and extension guidance.
 - `Resources/`: application icons and third-party licensing. `AppIcon.icns` is packaged; `AppIcon.png` supports README presentation.
 - `PhrasePerch.xcodeproj/` and `Info.plist`: build settings, shared scheme, dependency resolution, and bundle metadata.
 - `.build/`: generated builds, test results, and previews.
@@ -29,7 +36,7 @@ These commands open the project, build the application, run tests, and launch th
 
 ## Coding Style & Naming Conventions
 
-Use four-space indentation, `UpperCamelCase` types, and `lowerCamelCase` members. Match surrounding Swift style. Keep UI state on `@MainActor`; isolate disk work in the persistence actor. Maintain Swift 6 strict concurrency checks. Use Xcode diagnostics and `git diff --check` during verification.
+Use four-space indentation, `UpperCamelCase` types, and `lowerCamelCase` members. Match surrounding Swift style. Give each independent component and primary type its own matching filename. Views send actions to ViewModels; services own business changes; ConfigurationRepository owns configuration. Services must not reference concrete Views or ViewModels. Keep UI state on `@MainActor`; isolate disk work in the persistence actor. Maintain Swift 6 strict concurrency checks. Use Xcode diagnostics and `git diff --check` during verification.
 
 ## Testing Guidelines
 
