@@ -554,85 +554,118 @@ private struct SettingsPage: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 24) {
                 pageHeader("设置", subtitle: "管理快捷栏、系统权限和启动方式")
 
-                SurfaceCard(title: "触发条件", symbol: "cursorarrow.click") {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Toggle("启用快捷栏", isOn: Binding(
-                            get: { coordinator.store.configuration.preferences.isEnabled },
-                            set: { coordinator.store.configuration.preferences.isEnabled = $0 }))
-                            .disabled(!coordinator.store.isReady)
+                SurfaceCard(title: "触发方式", symbol: "cursorarrow.click", badge: "主要设置") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SettingsControlRow("启用快捷栏") {
+                            Toggle("启用快捷栏", isOn: Binding(
+                                get: { coordinator.store.configuration.preferences.isEnabled },
+                                set: { coordinator.store.configuration.preferences.isEnabled = $0 }))
+                                .labelsHidden().toggleStyle(.switch)
+                                .disabled(!coordinator.store.isReady)
+                        }
                         Divider()
-                        Picker("按住展开的触发键", selection: Binding(
-                            get: { coordinator.store.configuration.preferences.clickModifier },
-                            set: { coordinator.store.configuration.preferences.clickModifier = $0 })) {
-                            Text("Option ⌥").tag(ClickModifier.option)
-                            Text("Command ⌘").tag(ClickModifier.command)
-                            Text("Shift ⇧").tag(ClickModifier.shift)
+                        SettingsControlRow("修饰键") {
+                            Picker("修饰键", selection: Binding(
+                                get: { coordinator.store.configuration.preferences.clickModifier },
+                                set: { coordinator.store.configuration.preferences.clickModifier = $0 })) {
+                                Text("Option ⌥").tag(ClickModifier.option)
+                                Text("Command ⌘").tag(ClickModifier.command)
+                                Text("Shift ⇧").tag(ClickModifier.shift)
+                            }
+                            .labelsHidden().disabled(!coordinator.store.isReady)
                         }
-                        .disabled(!coordinator.store.isReady)
-                        Picker("展开位置", selection: Binding(
-                            get: { coordinator.store.configuration.preferences.menuAnchorMode },
-                            set: { coordinator.store.configuration.preferences.menuAnchorMode = $0 })) {
-                            ForEach(MenuAnchorMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                        SettingsControlRow("展开位置") {
+                            Picker("展开位置", selection: Binding(
+                                get: { coordinator.store.configuration.preferences.menuAnchorMode },
+                                set: { coordinator.store.configuration.preferences.menuAnchorMode = $0 })) {
+                                ForEach(MenuAnchorMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                            }
+                            .labelsHidden().disabled(!coordinator.store.isReady)
                         }
-                        .disabled(!coordinator.store.isReady)
-                        Text(coordinator.store.configuration.preferences.menuAnchorMode == .mouse
+                        settingsExplanation(coordinator.store.configuration.preferences.menuAnchorMode == .mouse
                              ? "先点入输入框，将鼠标放在其中。按住触发键展开，移到文案按钮，松开后粘贴；未选中则取消。"
                              : "先点入输入框。按住触发键从输入光标处展开，再移动鼠标选择文案，松开后粘贴。无法定位光标时改用鼠标位置。")
-                            .font(.caption).foregroundStyle(.secondary)
-                        KeyboardShortcuts.Recorder("按住展开的快捷键", name: .toggleFloatingInputBar)
+                        SettingsControlRow("快捷键") {
+                            KeyboardShortcuts.Recorder(for: .toggleFloatingInputBar)
+                                .accessibilityLabel("按住展开的快捷键")
+                        }
+                        settingsExplanation("每个应用使用修饰键还是快捷键，请在首页选择应用后设置。")
                     }
                 }
 
-                SurfaceCard(title: "系统权限", symbol: "hand.raised") {
+                SurfaceCard(title: "系统权限", symbol: "hand.raised", badge: "必需", badgeColor: .orange) {
                     VStack(alignment: .leading, spacing: 13) {
                         PermissionRow(step: coordinator.authorizationStep,
                                       detail: coordinator.authorizationDetail,
                                       isRestarting: coordinator.isRestarting,
                                       action: coordinator.performAuthorizationAction)
                         if !coordinator.mouseMonitorAvailable {
-                            Text("鼠标触发暂不可用，仍可使用上方录制的快捷键。")
-                                .font(.caption).foregroundStyle(.secondary)
+                            settingsExplanation("鼠标触发暂不可用，仍可使用上方录制的快捷键。")
                         }
                     }
                 }
 
-                SurfaceCard(title: "启动与显示", symbol: "rectangle.on.rectangle") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("登录时启动", isOn: Binding(
-                            get: { coordinator.loginEnabled },
-                            set: { coordinator.setLoginEnabled($0) }))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                SurfaceCard(title: "启动与显示", symbol: "rectangle.on.rectangle", badge: "可选") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SettingsControlRow("登录时启动") {
+                            Toggle("登录时启动", isOn: Binding(
+                                get: { coordinator.loginEnabled },
+                                set: { coordinator.setLoginEnabled($0) }))
+                                .labelsHidden().toggleStyle(.switch)
+                        }
                         Divider()
-                        Toggle("在 Dock 中显示图标", isOn: Binding(
-                            get: { coordinator.dockIconVisible },
-                            set: { coordinator.setDockIconVisible($0) }))
-                            .disabled(!coordinator.menuBarIconVisible)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Toggle("在菜单栏显示图标", isOn: Binding(
-                            get: { coordinator.menuBarIconVisible },
-                            set: { coordinator.setMenuBarIconVisible($0) }))
-                            .disabled(!coordinator.dockIconVisible)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("请至少保留 Dock 或菜单栏中的一个入口。")
-                            .font(.caption).foregroundStyle(.secondary)
+                        SettingsControlRow("在 Dock 中显示图标") {
+                            Toggle("在 Dock 中显示图标", isOn: Binding(
+                                get: { coordinator.dockIconVisible },
+                                set: { coordinator.setDockIconVisible($0) }))
+                                .disabled(!coordinator.menuBarIconVisible)
+                                .labelsHidden().toggleStyle(.switch)
+                        }
+                        SettingsControlRow("在菜单栏显示图标") {
+                            Toggle("在菜单栏显示图标", isOn: Binding(
+                                get: { coordinator.menuBarIconVisible },
+                                set: { coordinator.setMenuBarIconVisible($0) }))
+                                .disabled(!coordinator.dockIconVisible)
+                                .labelsHidden().toggleStyle(.switch)
+                        }
+                        settingsExplanation("请至少保留 Dock 或菜单栏中的一个入口。")
                     }
                 }
 
-                SurfaceCard(title: "配置", symbol: "externaldrive") {
+                SurfaceCard(title: "配置", symbol: "externaldrive", badge: "按需使用") {
                     HStack(spacing: 10) {
                         Button("导入配置…", action: coordinator.importConfiguration)
                         Button("导出配置…", action: coordinator.exportConfiguration)
                         Spacer()
-                        Text("配置保存在本机")
-                            .font(.caption).foregroundStyle(.secondary)
+                        settingsExplanation("配置保存在本机")
                     }
                 }
             }
+            .frame(maxWidth: 860, alignment: .leading)
             .padding(26)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct SettingsControlRow<Control: View>: View {
+    let title: String
+    let control: Control
+
+    init(_ title: String, @ViewBuilder control: () -> Control) {
+        self.title = title
+        self.control = control()
+    }
+
+    var body: some View {
+        HStack(spacing: 24) {
+            Text(title).font(.system(size: 13, weight: .regular))
+                .foregroundStyle(Color.primary.opacity(0.85))
+            Spacer(minLength: 12)
+            control.frame(width: 210, alignment: .trailing)
         }
     }
 }
@@ -647,14 +680,15 @@ struct PermissionRow: View {
             Image(systemName: step == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                 .foregroundStyle(step == .ready ? Color.green : Color.orange)
             VStack(alignment: .leading, spacing: 4) {
-                Text("辅助功能").fontWeight(.semibold)
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("辅助功能").font(.system(size: 13, weight: .medium))
+                settingsExplanation(detail)
             }
             Spacer(minLength: 16)
             if step == .ready {
-                Text(step.title).foregroundStyle(.green)
+                Text(step.title).font(.system(size: 11, weight: .medium)).foregroundStyle(.green)
             } else {
                 Button(isRestarting ? "正在重启…" : step.title, action: action).disabled(isRestarting)
+                    .buttonStyle(.borderedProminent).tint(.orange)
             }
         }
     }
@@ -681,29 +715,50 @@ private struct AboutPage: View {
 private struct SurfaceCard<Content: View>: View {
     let title: String
     let symbol: String
+    let badge: String
+    let badgeColor: Color
     let content: Content
 
-    init(title: String, symbol: String, @ViewBuilder content: () -> Content) {
+    init(title: String, symbol: String, badge: String, badgeColor: Color = .secondary,
+         @ViewBuilder content: () -> Content) {
         self.title = title
         self.symbol = symbol
+        self.badge = badge
+        self.badgeColor = badgeColor
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label(title, systemImage: symbol).font(.headline)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(.secondary)
+                Text(title).font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Text(badge).font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(badgeColor)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(badgeColor.opacity(0.1), in: Capsule())
+            }
             content
+                .font(.system(size: 13, weight: .regular))
         }
-        .padding(20)
+        .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(Color.white.opacity(0.055), lineWidth: 1))
+        .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.065), lineWidth: 1))
     }
 }
 
 private func pageHeader(_ title: String, subtitle: String) -> some View {
     VStack(alignment: .leading, spacing: 5) {
-        Text(title).font(.largeTitle.weight(.semibold))
-        Text(subtitle).font(.callout).foregroundStyle(.secondary)
+        Text(title).font(.system(size: 24, weight: .semibold))
+        Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
     }
+}
+
+private func settingsExplanation(_ text: String) -> some View {
+    Text(text).font(.system(size: 11, weight: .regular))
+        .foregroundStyle(Color.primary.opacity(0.45))
+        .lineSpacing(3)
+        .fixedSize(horizontal: false, vertical: true)
 }
