@@ -12,7 +12,8 @@ final class FloatingMenuButton: NonactivatingButton {
         shape.lineWidth = selected ? 1.5 : 0.8
         shape.stroke()
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white,
+            .font: NSFont.systemFont(ofSize: snippetTitleFontSize, weight: .medium),
+            .foregroundColor: NSColor.white,
         ]
         let size = (title as NSString).size(withAttributes: attributes)
         (title as NSString).draw(

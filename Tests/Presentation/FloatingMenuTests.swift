@@ -5,6 +5,33 @@ import XCTest
 @testable import PhrasePerch
 
 final class FloatingMenuTests: PresentationTestCase {
+    @MainActor
+    func testSingleLineTitlesFitAtOneFontSizeInMenuAndEditor() throws {
+        let titles = ["继续", "详细解释一下", "请详细解释一下", "请检查并解释这段代码", String(repeating: "标题", count: 10),
+            "Explain this code", "ThisIsAnUnbrokenTitle", "👩‍💻👨‍👩‍👧‍👦快速回复和检查代码", "第一行\n第二行"]
+        for height in [RadialLayout.buttonSize.height, EditorRingLayout.buttonSize.height] {
+            for title in titles + [String(repeating: "👩‍💻", count: 10)] {
+                let display = floatingButtonTitle(title)
+                let size = CGSize(width: snippetButtonWidth(for: [title]), height: height)
+                XCTAssertFalse(display.contains("\n"))
+                let measured = (display as NSString).size(withAttributes: [
+                    .font: NSFont.systemFont(ofSize: snippetTitleFontSize, weight: .medium)])
+                XCTAssertLessThanOrEqual(measured.width, size.width - 12)
+                XCTAssertLessThanOrEqual(measured.height, size.height - 8)
+            }
+        }
+        let controller = FloatingMenuWindowController(overlayInspector: StubOverlayInspector())
+        let profile = AppProfile(
+            application: ApplicationIdentity(bundleIdentifier: "preview.titles", fallbackBundlePath: nil),
+            displayName: "Preview", buttons: titles.prefix(8).map { Snippet(title: $0, text: "正文") })
+        XCTAssertTrue(controller.configure(profile: profile, at: CGPoint(x: 500, y: 400), visible: CGRect(x: 0, y: 0, width: 1000, height: 800)))
+        let root = try XCTUnwrap(controller.panel.contentView)
+        XCTAssertEqual(root.subviews.compactMap { ($0 as? NSButton)?.title }, Array(titles.prefix(8)).map(floatingButtonTitle))
+        try savePreview(root, name: "radial-single-line-titles.png")
+        (root.subviews[4] as? FloatingMenuButton)?.selected = true
+        try savePreview(root, name: "radial-single-line-titles-selected.png")
+    }
+
     func testRadialGeometryAllItemsAndScreenEdges() throws {
         for visible in [
             CGRect(x: 0, y: 0, width: 1440, height: 900),
@@ -17,14 +44,16 @@ final class FloatingMenuTests: PresentationTestCase {
                 CGPoint(x: visible.minX + 1, y: visible.maxY - 1),
                 CGPoint(x: visible.maxX - 1, y: visible.maxY - 1),
             ]
-            for count in [1, 3, 6, 12, 24] {
+            for count in [1, 3, 6, 7, 8, 12, 24] {
                 for point in points {
                     let layout = try XCTUnwrap(RadialLayout(anchor: point, visible: visible, count: count))
                     XCTAssertEqual(layout.items.count, count)
                     XCTAssertEqual(layout.anchor, point)
                     XCTAssertTrue(visible.contains(layout.frame))
                     XCTAssertNil(layout.selectedIndex(at: point))
+                    let radius = try XCTUnwrap(layout.items.first).midY - layout.center.y
                     for (index, rect) in layout.items.enumerated() {
+                        XCTAssertEqual(hypot(rect.midX - layout.center.x, rect.midY - layout.center.y), radius, accuracy: 0.001)
                         XCTAssertTrue(visible.contains(rect))
                         XCTAssertEqual(layout.selectedIndex(at: CGPoint(x: rect.midX, y: rect.midY)), index)
                         XCTAssertNil(layout.selectedIndex(at: CGPoint(x: rect.minX, y: rect.minY)))
@@ -71,9 +100,10 @@ final class FloatingMenuTests: PresentationTestCase {
                 XCTAssertEqual(a.midX - middle.center.x, b.midX - edge.center.x, accuracy: 0.001)
                 XCTAssertEqual(a.midY - middle.center.y, b.midY - edge.center.y, accuracy: 0.001)
             }
-            for ringStart in stride(from: 0, to: min(count, 6), by: 1) {
-                let rect = middle.items[ringStart]
-                XCTAssertEqual(hypot(rect.midX - middle.center.x, rect.midY - middle.center.y), 100, accuracy: 0.001)
+            let radius = hypot(middle.items[0].midX - middle.center.x, middle.items[0].midY - middle.center.y)
+            if count <= 6 { XCTAssertEqual(radius, 100, accuracy: 0.001) }
+            for rect in middle.items {
+                XCTAssertEqual(hypot(rect.midX - middle.center.x, rect.midY - middle.center.y), radius, accuracy: 0.001)
             }
         }
     }

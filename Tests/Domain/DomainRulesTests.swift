@@ -191,10 +191,14 @@ final class DomainRulesTests: PresentationTestCase {
         XCTAssertTrue(dockPolicyChangeNeeded(currentDockVisible: true, requestedDockVisible: false))
     }
 
-    func testFloatingButtonTitleMatchesCapsuleTruncation() {
+    func testFloatingButtonTitleShowsTenCharactersOnOneLine() {
         XCTAssertEqual(floatingButtonTitle("继续"), "继续")
-        XCTAssertEqual(floatingButtonTitle("详细解释一下"), "详细解释…")
-        XCTAssertEqual(floatingButtonTitle("👩‍💻快速回复"), "👩‍💻快速回…")
+        XCTAssertEqual(floatingButtonTitle("详细解释一下"), "详细解释一下")
+        XCTAssertEqual(floatingButtonTitle("👩‍💻快速回复"), "👩‍💻快速回复")
+        XCTAssertEqual(floatingButtonTitle("请检查并解释这段代码"), "请检查并解释这段代码")
+        XCTAssertEqual(floatingButtonTitle("请检查并解释这段代码实现"), "请检查并解释这段代码…")
+        XCTAssertEqual(floatingButtonTitle("第一行\n第二行"), "第一行 第二行")
+        XCTAssertEqual(floatingButtonTitle(String(repeating: "👩‍💻", count: 11)), String(repeating: "👩‍💻", count: 10) + "…")
     }
 
     func testCommandQIsRecognizedWithoutOtherModifiers() {

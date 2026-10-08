@@ -8,9 +8,10 @@ struct RadialLayout {
     let items: [CGRect]
     static let buttonSize = CGSize(width: 88, height: 40)
 
-    init?(anchor: CGPoint, visible: CGRect, count: Int) {
-        guard count > 0, count <= 512, anchor.x.isFinite, anchor.y.isFinite,
-            visible.contains(anchor), visible.width >= 104, visible.height >= 56
+    init?(anchor: CGPoint, visible: CGRect, count: Int, buttonWidth: CGFloat = Self.buttonSize.width) {
+        let buttonSize = CGSize(width: buttonWidth, height: Self.buttonSize.height)
+        guard buttonWidth.isFinite, buttonWidth >= Self.buttonSize.width, count > 0, count <= 512, anchor.x.isFinite, anchor.y.isFinite,
+            visible.contains(anchor), visible.width >= buttonSize.width + 16, visible.height >= 56
         else { return nil }
         let safe = visible.insetBy(dx: 8, dy: 8)
         // Leave a half-point inside the safety margin so fractional trigonometric
@@ -18,36 +19,21 @@ struct RadialLayout {
         let fitting = safe.insetBy(dx: 0.5, dy: 0.5)
         var placed: [CGRect] = []
         var radius: CGFloat = 100
-        var ringNumber = 1
-        while placed.count < count {
-            let slots = min(count - placed.count, ringNumber * 6)
-            var ring: [CGRect] = []
-            while radius * 2 <= max(safe.width, safe.height) + 100 {
-                ring = (0..<slots).map { index in
-                    let angle = CGFloat.pi / 2 - CGFloat(index) * 2 * .pi / CGFloat(slots)
-                    return CGRect(
-                        x: cos(angle) * radius - Self.buttonSize.width / 2,
-                        y: sin(angle) * radius - Self.buttonSize.height / 2,
-                        width: Self.buttonSize.width, height: Self.buttonSize.height)
-                }
-                let all = placed + ring
-                let collides = all.enumerated().contains { index, rect in
-                    all.dropFirst(index + 1).contains { rect.insetBy(dx: -6, dy: -6).intersects($0) }
-                }
-                if !collides { break }
-                radius += 12
+        while radius * 2 + buttonSize.height <= fitting.height {
+            let ring = CircularButtonLayout.items(count: count, radius: radius, buttonSize: buttonSize).map {
+                CGRect(x: $0.minX, y: -$0.maxY, width: $0.width, height: $0.height)
             }
-            guard !ring.isEmpty,
-                !ring.enumerated().contains(where: { index, rect in
-                    (placed + Array(ring.dropFirst(index + 1))).contains { rect.insetBy(dx: -6, dy: -6).intersects($0) }
-                })
-            else { return nil }
-            placed += ring
-            let bounds = placed.reduce(CGRect(x: -16, y: -16, width: 32, height: 32)) { $0.union($1) }
+            let bounds = ring.reduce(CGRect(x: -16, y: -16, width: 32, height: 32)) { $0.union($1) }
             guard bounds.width <= fitting.width, bounds.height <= fitting.height else { return nil }
-            radius += 72
-            ringNumber += 1
+            if ring.count == count, !ring.enumerated().contains(where: { index, rect in
+                ring.dropFirst(index + 1).contains { rect.insetBy(dx: -6, dy: -6).intersects($0) }
+            }) {
+                placed = ring
+                break
+            }
+            radius += 12
         }
+        guard placed.count == count else { return nil }
         let bounds = placed.reduce(CGRect(x: -16, y: -16, width: 32, height: 32)) { $0.union($1) }
         let center = CGPoint(
             x: max(fitting.minX - bounds.minX, min(anchor.x, fitting.maxX - bounds.maxX)),

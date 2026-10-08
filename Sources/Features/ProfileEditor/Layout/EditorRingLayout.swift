@@ -1,69 +1,35 @@
-import AppKit
-import KeyboardShortcuts
-import SwiftUI
+import CoreGraphics
 
 struct EditorRingLayout {
     static let buttonSize = CGSize(width: 88, height: 36)
-    static let cornerRadius: CGFloat = 12
     let items: [CGRect]
+    let canvasSize: CGSize
+    let deletionRect: CGRect
 
-    // Distance between the actual rounded edges, rather than between centers.
     static func edgeGap(_ first: CGRect, _ second: CGRect) -> CGFloat {
-        let dx = max(0, abs(first.midX - second.midX) - (first.width - 2 * cornerRadius))
-        let dy = max(0, abs(first.midY - second.midY) - (first.height - 2 * cornerRadius))
-        return hypot(dx, dy) - 2 * cornerRadius
+        CircularButtonLayout.edgeGap(first, second)
     }
 
-    init(size: CGSize, count: Int) {
+    init(size: CGSize, count: Int, buttonWidth: CGFloat = Self.buttonSize.width) {
         guard count > 0, count <= SnippetEditorSession.pageSize else {
             items = []
+            canvasSize = size
+            deletionRect = .zero
             return
         }
-        let radius = max(
-            0,
-            min(
-                140, (size.width - Self.buttonSize.width - 48) / 2,
-                (size.height - Self.buttonSize.height - 48) / 2))
-        func rect(at angle: CGFloat) -> CGRect {
-            CGRect(
-                x: size.width / 2 + sin(angle) * radius - Self.buttonSize.width / 2,
-                y: size.height / 2 - cos(angle) * radius - Self.buttonSize.height / 2,
-                width: Self.buttonSize.width, height: Self.buttonSize.height)
+        let buttonSize = CGSize(width: buttonWidth, height: Self.buttonSize.height)
+        let minimumRadius = max(88, (buttonWidth + 6) / sqrt(3))
+        let canvasSize = CGSize(
+            width: max(size.width, minimumRadius * 2 + buttonWidth + 4),
+            height: max(size.height, minimumRadius * 2 + buttonSize.height + 48))
+        self.canvasSize = canvasSize
+        let radius = max(0, min(140,
+            (canvasSize.width - buttonWidth - 4) / 2,
+            (canvasSize.height - buttonSize.height - 48) / 2))
+        items = CircularButtonLayout.items(count: count, radius: radius, buttonSize: buttonSize).map {
+            $0.offsetBy(dx: canvasSize.width / 2, dy: canvasSize.height / 2)
         }
-        func nextAngle(after angle: CGFloat, gap: CGFloat) -> CGFloat {
-            let first = rect(at: angle)
-            var low: CGFloat = 0
-            var high = CGFloat.pi
-            guard Self.edgeGap(first, rect(at: angle + high)) >= gap else { return .infinity }
-            for _ in 0..<24 {
-                let middle = (low + high) / 2
-                if Self.edgeGap(first, rect(at: angle + middle)) < gap { low = middle } else { high = middle }
-            }
-            return angle + (low + high) / 2
-        }
-        guard count > 2 else {
-            items = (0..<count).map { rect(at: CGFloat($0) * 2 * .pi / CGFloat(count)) }
-            return
-        }
-        // Solve the common clearance that closes one complete circle.
-        var low: CGFloat = 0
-        var high = radius * 2
-        for _ in 0..<28 {
-            let gap = (low + high) / 2
-            var angle: CGFloat = 0
-            for _ in 0..<count {
-                angle = nextAngle(after: angle, gap: gap)
-                if !angle.isFinite { break }
-            }
-            if angle > 2 * .pi { high = gap } else { low = gap }
-        }
-        let gap = (low + high) / 2
-        var angle: CGFloat = 0
-        var placed = [rect(at: angle)]
-        for _ in 1..<count {
-            angle = nextAngle(after: angle, gap: gap)
-            placed.append(rect(at: angle))
-        }
-        items = placed
+        deletionRect = CGRect(x: canvasSize.width / 2 - 30,
+            y: canvasSize.height / 2 + radius + buttonSize.height / 2 + 4, width: 60, height: 20)
     }
 }

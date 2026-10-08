@@ -255,7 +255,7 @@ final class NativePresentationTests: PresentationTestCase {
         for count in [0, 1, 4, 8, 9, 17] {
             let snippets = (0..<count).map { index in
                 Snippet(
-                    title: index == 1 ? "这是一条很长的文案标题用于验证截断" : "文案\(index + 1)",
+                    title: index == 1 ? "这是一条很长的文案标题用于验证完整显示" : "文案\(index + 1)",
                     text: String(repeating: "这是粘贴内容，用于验证正文编辑和滚动。\n", count: 40),
                     isEnabled: index != 2)
             }
@@ -337,13 +337,22 @@ final class NativePresentationTests: PresentationTestCase {
             CGSize(width: 1280, height: 800),
         ] {
             let area = CGSize(width: EditorColumns(width: size.width).ring, height: size.height - 112)
-            for count in 1...8 {
-                let layout = EditorRingLayout(size: area, count: count)
-                for (index, item) in layout.items.enumerated() {
-                    let deletion = CGRect(x: item.midX - 30, y: item.maxY + 4, width: 60, height: 20)
-                    XCTAssertTrue(CGRect(origin: .zero, size: area).contains(deletion))
-                    for (otherIndex, other) in layout.items.enumerated() where index != otherIndex {
-                        XCTAssertFalse(deletion.intersects(other), "Delete control overlaps another capsule")
+            for width in [CGFloat(88), 160, 210] {
+                for count in 1...8 {
+                    let layout = EditorRingLayout(size: area, count: count, buttonWidth: width)
+                    XCTAssertEqual(layout.items.count, count)
+                    let center = CGPoint(x: layout.canvasSize.width / 2, y: layout.canvasSize.height / 2)
+                    let radius = layout.items.first.map { hypot($0.midX - center.x, $0.midY - center.y) } ?? 0
+                    let deletion = layout.deletionRect
+                    XCTAssertTrue(CGRect(origin: .zero, size: layout.canvasSize).contains(deletion))
+                    for (index, item) in layout.items.enumerated() {
+                        XCTAssertTrue(CGRect(origin: .zero, size: layout.canvasSize).contains(item))
+                        XCTAssertEqual(hypot(item.midX - center.x, item.midY - center.y), radius, accuracy: 0.001)
+                        XCTAssertFalse(deletion.intersects(item))
+                        for (otherIndex, other) in layout.items.enumerated() where index != otherIndex {
+                            XCTAssertFalse(item.intersects(other), "Capsules overlap at width \(width), count \(count)")
+                            XCTAssertFalse(deletion.intersects(other), "Delete control overlaps at width \(width), count \(count)")
+                        }
                     }
                 }
             }

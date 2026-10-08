@@ -12,7 +12,7 @@ final class FloatingMenuViewModel {
     var isPresented: Bool { presentation.presented }
     func configure(profile: AppProfile, at point: CGPoint, visible: CGRect) -> Bool {
         let enabled = profile.buttons.filter(\.isEnabled)
-        guard let next = RadialLayout(anchor: point, visible: visible, count: enabled.count) else {
+        guard let next = RadialLayout(anchor: point, visible: visible, count: enabled.count, buttonWidth: snippetButtonWidth(for: enabled.map(\.title))) else {
             failureMessage = "文案无法完整排入当前屏幕，请减少启用文案数量。"
             return false
         }

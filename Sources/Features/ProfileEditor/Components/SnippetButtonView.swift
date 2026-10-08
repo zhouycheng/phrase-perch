@@ -9,8 +9,9 @@ struct SnippetButtonView: View {
 
     var body: some View {
         Button(action: action) {
-            Text(floatingButtonTitle(snippet.title)).font(.system(size: 13, weight: .medium))
-                .foregroundStyle(selected ? Color.black.opacity(0.9) : Color.white.opacity(0.8)).lineLimit(1)
+            Text(floatingButtonTitle(snippet.title)).font(.system(size: snippetTitleFontSize, weight: .medium))
+                .foregroundStyle(selected ? Color.black.opacity(0.9) : Color.white.opacity(0.8))
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 .frame(width: size.width, height: size.height)
                 .background(
                     Color(white: selected ? (hovering ? 0.98 : 0.92) : (hovering ? 0.42 : 0.32)),
