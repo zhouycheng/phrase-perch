@@ -4,6 +4,7 @@ import Foundation
 final class AppDependencies {
     let repository: ConfigurationRepository
     let editing: ProfileEditingService
+    let titles: TitleGenerationService
     let input: TextInsertionService
     let floatingMenu: FloatingMenuWindowController
     let authorizationGuide: AuthorizationGuideWindowController
@@ -19,10 +20,12 @@ final class AppDependencies {
     init(
         repository: ConfigurationRepository = ConfigurationRepository(),
         authorizationEnvironment: AuthorizationEnvironment = AuthorizationEnvironment(),
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        titleService: TitleGenerationService = TitleGenerationService()
     ) {
         self.repository = repository
         editing = ProfileEditingService(repository: repository)
+        titles = titleService
         input = TextInsertionService()
         floatingMenu = FloatingMenuWindowController()
         authorizationGuide = AuthorizationGuideWindowController()
@@ -36,11 +39,11 @@ final class AppDependencies {
             store: repository, input: input, floating: floatingMenu,
             authorization: authorization, monitor: monitor, entry: entry)
         mainWindowViewModel = MainWindowViewModel(
-            repository: repository, editing: editing, files: files, authorization: authorization)
+            repository: repository, editing: editing, files: files, authorization: authorization, titleService: titles)
         preferencesViewModel = PreferencesViewModel(
             repository: repository, service: PreferencesService(repository: repository),
             authorization: authorization, entry: entry, files: files,
-            monitorAvailable: { [monitor] in monitor.mouseMonitorAvailable })
+            monitorAvailable: { [monitor] in monitor.mouseMonitorAvailable }, titleService: titles)
         mainWindow = MainWindowController(viewModel: mainWindowViewModel, preferences: preferencesViewModel)
         authorization.onInvalidate = { [weak runtime] in runtime?.invalidate() }
         files.onInvalidate = { [weak runtime] in runtime?.invalidate() }

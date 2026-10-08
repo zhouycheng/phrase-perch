@@ -6,6 +6,45 @@ import XCTest
 
 final class NativePresentationTests: PresentationTestCase {
     @MainActor
+    func testAITitleEditorAndSettingsPreviewsAtAllWindowSizes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationRepository(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        store.update {
+            $0.preferences.titleModel = "local-model"
+            $0.profiles = [AppProfile(
+                application: ApplicationIdentity(bundleIdentifier: "preview.ai", fallbackBundlePath: nil), displayName: "Preview",
+                buttons: ["继续", "详细解释一下", "请详细解释一下", "请检查代码并给修改建议", String(repeating: "标题", count: 10),
+                    "Explain this code", "👩‍💻快速回复"].map { Snippet(title: $0, text: "解释这段代码并给出修改建议。") })]
+        }
+        let coordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: store))
+        defer { coordinator.stop() }
+        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620), CGSize(width: 1280, height: 800)] {
+            for page in [MainPage.home, .settings] {
+                let root = NSHostingView(rootView: makeMainWindowView(coordinator, page: page))
+                let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = root
+                root.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(80))
+                try savePreview(root, name: "ai-\(page)-\(Int(size.width)).png")
+                XCTAssertEqual(root.bounds.width, size.width, accuracy: 1)
+                window.close()
+            }
+            let card = NSHostingView(rootView:
+                TitleGenerationPreferencesCardView(viewModel: coordinator.preferencesViewModel)
+                    .padding(26).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color(nsColor: .windowBackgroundColor)))
+            card.frame = CGRect(x: 0, y: 0, width: size.width - 68, height: 330)
+            card.appearance = NSAppearance(named: .darkAqua)
+            try await Task.sleep(for: .milliseconds(80))
+            try savePreview(card, name: "ai-card-\(Int(size.width)).png")
+        }
+    }
+
+    @MainActor
     func testSettingsWindowIsReusedAfterRepeatedOpenAndClose() throws {
         try requireVisibleUITests()
         let coordinator = ApplicationCoordinator()

@@ -11,6 +11,8 @@ struct PreferencesView: View {
 
                 TriggerPreferencesCardView(viewModel: viewModel)
 
+                TitleGenerationPreferencesCardView(viewModel: viewModel)
+
                 AuthorizationPreferencesCardView(viewModel: viewModel)
 
                 AppEntryPreferencesCardView(viewModel: viewModel)

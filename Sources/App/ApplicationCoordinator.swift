@@ -25,5 +25,6 @@ final class ApplicationCoordinator {
         dependencies.runtime.stop()
         dependencies.entry.stop()
         dependencies.mainWindowViewModel.stop()
+        dependencies.preferencesViewModel.cancelModelsRead()
     }
 }

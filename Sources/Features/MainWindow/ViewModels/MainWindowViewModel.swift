@@ -3,7 +3,9 @@ import Observation
 
 @MainActor @Observable
 final class MainWindowViewModel {
-    var page = MainPage.home
+    var page = MainPage.home {
+        didSet { if page != .home { selectedEditor?.cancelTitleGeneration() } }
+    }
     private(set) var selectedProfile: UUID?
     private(set) var deleteProfile: UUID?
     var recoveryAlert = false
@@ -11,17 +13,20 @@ final class MainWindowViewModel {
     private let editing: ProfileEditingService
     private let files: ConfigurationFileService
     private let authorization: AuthorizationService
+    private let titleService: TitleGenerationService
     private var editors: [UUID: ProfileEditorViewModel] = [:]
     private var subscription: UUID?
 
     init(
         repository: ConfigurationRepository, editing: ProfileEditingService,
-        files: ConfigurationFileService, authorization: AuthorizationService
+        files: ConfigurationFileService, authorization: AuthorizationService,
+        titleService: TitleGenerationService = TitleGenerationService()
     ) {
         self.repository = repository
         self.editing = editing
         self.files = files
         self.authorization = authorization
+        self.titleService = titleService
         reconcileProfiles()
         subscription = repository.observe { [weak self] in self?.reconcileProfiles() }
     }
@@ -33,7 +38,11 @@ final class MainWindowViewModel {
     var deletionName: String { profiles.first { $0.id == deleteProfile }?.displayName ?? "" }
     var selectedEditor: ProfileEditorViewModel? { selectedProfile.flatMap { editors[$0] } }
     var runningApplications: [ApplicationChoice] { ApplicationCatalog.runningApplications() }
-    func selectProfile(_ id: UUID) { if profiles.contains(where: { $0.id == id }) { selectedProfile = id } }
+    func selectProfile(_ id: UUID) {
+        guard profiles.contains(where: { $0.id == id }) else { return }
+        if selectedProfile != id { selectedEditor?.cancelTitleGeneration() }
+        selectedProfile = id
+    }
     func setEnabled(_ id: UUID, _ value: Bool) { editing.editProfile(id) { $0.isEnabled = value } }
     func requestDeletion(_ id: UUID) { if profiles.contains(where: { $0.id == id }) { deleteProfile = id } }
     func cancelDeletion() { deleteProfile = nil }
@@ -53,7 +62,8 @@ final class MainWindowViewModel {
         if selectedProfile == nil || !ids.contains(selectedProfile!) { selectedProfile = ids.first }
         for id in Array(editors.keys) where !ids.contains(id) { editors.removeValue(forKey: id)?.stop() }
         for id in ids where editors[id] == nil {
-            let editor = ProfileEditorViewModel(profileID: id, repository: repository, editing: editing)
+            let editor = ProfileEditorViewModel(
+                profileID: id, repository: repository, editing: editing, titleService: titleService)
             editor.onOpenConfiguration = { [weak self] in self?.openConfiguration() }
             editors[id] = editor
         }

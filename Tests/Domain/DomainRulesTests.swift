@@ -201,6 +201,16 @@ final class DomainRulesTests: PresentationTestCase {
         XCTAssertEqual(floatingButtonTitle(String(repeating: "👩‍💻", count: 11)), String(repeating: "👩‍💻", count: 10) + "…")
     }
 
+    func testLegacyTitleSettingsDefaultAndRoundTrip() throws {
+        let legacy = Data(#"{"isEnabled":true,"clickModifier":"option"}"#.utf8)
+        var preferences = try JSONDecoder().decode(Preferences.self, from: legacy)
+        XCTAssertEqual(preferences.titleAPIBaseURL, Preferences.defaultTitleAPIBaseURL)
+        XCTAssertEqual(preferences.titleModel, "")
+        preferences.titleAPIBaseURL = "http://localhost:1234/v1"
+        preferences.titleModel = "local-model"
+        XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences)), preferences)
+    }
+
     func testCommandQIsRecognizedWithoutOtherModifiers() {
         XCTAssertTrue(isCommandQuitShortcut(charactersIgnoringModifiers: "q", modifiers: .command))
         XCTAssertFalse(isCommandQuitShortcut(charactersIgnoringModifiers: "q", modifiers: [.command, .shift]))

@@ -2,13 +2,14 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class MainWindowController {
+final class MainWindowController: NSObject, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private let viewModel: MainWindowViewModel
     private let preferences: PreferencesViewModel
     init(viewModel: MainWindowViewModel, preferences: PreferencesViewModel) {
         self.viewModel = viewModel
         self.preferences = preferences
+        super.init()
     }
     func open() {
         if settingsWindow == nil {
@@ -18,6 +19,7 @@ final class MainWindowController {
             window.title = "PhrasePerch"
             window.titleVisibility = .visible
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.contentViewController = NSHostingController(
                 rootView: MainWindowView(viewModel: viewModel, preferences: preferences))
             window.setContentSize(CGSize(width: 960, height: 620))
@@ -28,5 +30,9 @@ final class MainWindowController {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+    func windowWillClose(_ notification: Notification) {
+        viewModel.selectedEditor?.cancelTitleGeneration()
+        preferences.cancelModelsRead()
     }
 }
