@@ -5,6 +5,7 @@ struct ApplicationRowView: View {
     let selected: Bool
     @Binding var enabled: Bool
     let select: () -> Void
+    let duplicate: () -> Void
     let requestDelete: () -> Void
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -37,6 +38,7 @@ struct ApplicationRowView: View {
             in: RoundedRectangle(cornerRadius: 10)
         )
         .contextMenu {
+            Button("以此创建一个配置", action: duplicate)
             Button("移除应用…", role: .destructive) { requestDelete() }
         }
     }

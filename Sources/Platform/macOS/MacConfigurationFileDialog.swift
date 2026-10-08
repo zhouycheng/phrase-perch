@@ -4,11 +4,21 @@ import UniformTypeIdentifiers
 @MainActor
 final class MacConfigurationFileDialog: ConfigurationFileDialog {
     func chooseApplications() -> [URL] {
+        let panel = applicationPanel(allowsMultipleSelection: true)
+        return panel.runModal() == .OK ? panel.urls : []
+    }
+
+    func chooseApplication() -> URL? {
+        let panel = applicationPanel(allowsMultipleSelection: false)
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private func applicationPanel(allowsMultipleSelection: Bool) -> NSOpenPanel {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.applicationBundle]
         panel.treatsFilePackagesAsDirectories = false
-        panel.allowsMultipleSelection = true
-        return panel.runModal() == .OK ? panel.urls : []
+        panel.allowsMultipleSelection = allowsMultipleSelection
+        return panel
     }
 
     func chooseImport() -> URL? {

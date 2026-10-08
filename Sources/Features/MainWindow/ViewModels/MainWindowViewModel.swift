@@ -46,6 +46,7 @@ final class MainWindowViewModel {
     func recover() { Task { await repository.restoreBackup() } }
     func chooseApplications() { files.chooseApplications() }
     func addApplication(_ url: URL) { files.addApplication(url) }
+    func duplicateProfile(_ id: UUID) { files.duplicateProfile(id) }
     func openConfiguration() { page = .settings }
     func reconcileProfiles() {
         let ids = profiles.map(\.id)

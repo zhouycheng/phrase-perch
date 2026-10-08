@@ -14,6 +14,7 @@ struct ApplicationListView: View {
                             profile: profile, selected: viewModel.selectedProfile == profile.id,
                             enabled: Binding(get: { profile.isEnabled }, set: { viewModel.setEnabled(profile.id, $0) }),
                             select: { viewModel.selectProfile(profile.id) },
+                            duplicate: { viewModel.duplicateProfile(profile.id) },
                             requestDelete: { viewModel.requestDeletion(profile.id) })
                     }
                 }
