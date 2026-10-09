@@ -5,9 +5,21 @@ struct HoldMenuSession {
     static let modifierReleaseTimeout: Duration = .milliseconds(500)
     enum Trigger: Equatable { case modifier, shortcut }
     enum Phase: Equatable { case idle, checking, choosing, waitingForModifiers, inserting }
+    enum ModifierAction: Equatable { case begin, release, cancel, none }
     private(set) var id: UUID?
     private(set) var trigger: Trigger?
     private(set) var phase = Phase.idle
+
+    func modifierAction(current: UInt, previous: UInt, configured: UInt, shortcutModifiers: UInt?) -> ModifierAction {
+        if trigger == .shortcut {
+            guard let allowed = shortcutModifiers, current & ~allowed == 0 else { return .cancel }
+            return (phase == .checking || phase == .choosing) && current != allowed ? .release : .none
+        }
+        if trigger == .modifier, phase == .checking || phase == .choosing {
+            return current == 0 ? .release : (current == configured ? .none : .cancel)
+        }
+        return current == configured && previous & configured == 0 ? .begin : .none
+    }
 
     mutating func begin(_ trigger: Trigger) -> UUID? {
         guard phase == .idle else { return nil }

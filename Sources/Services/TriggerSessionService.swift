@@ -1,5 +1,6 @@
 import AppKit
 import KeyboardShortcuts
+import OSLog
 
 @MainActor
 final class TriggerSessionService {
@@ -15,9 +16,11 @@ final class TriggerSessionService {
     private var holdTask: Task<Void, Never>?
     private var previousModifiers: NSEvent.ModifierFlags = []
     private var timer: Timer?
-    private var readyWasSeen = false
     private var subscription: UUID?
-    var notice = ""
+    private let log = Logger(subsystem: "local.FloatingInputBar", category: "trigger")
+    var notice = "" {
+        didSet { if !notice.isEmpty { log.info("\(self.notice, privacy: .public)") } }
+    }
 
     init(
         store: ConfigurationRepository, input: TextInsertionService, floating: any FloatingMenuPresenting,
@@ -31,15 +34,24 @@ final class TriggerSessionService {
         self.entry = entry
     }
     func start() {
-        subscription = store.observe { [weak self] in self?.invalidate() }
+        subscription = store.observe { [weak self] in
+            self?.invalidate()
+            self?.frontChanged()
+        }
         floating.onDismiss = { [weak self] in self?.invalidate() }
         monitor.onFrontChanged = { [weak self] in self?.frontChanged() }
         monitor.onSessionChanged = { [weak self] active in
             self?.sessionActive = active
-            if active { self?.frontChanged() } else { self?.invalidate() }
+            if active { self?.frontChanged() } else {
+                self?.invalidate()
+                self?.refreshShortcutAvailability()
+            }
         }
         monitor.onInvalidated = { [weak self] in self?.invalidate() }
-        monitor.onPermissionsChanged = { [weak self] in self?.authorization.refreshPermissions() }
+        monitor.onPermissionsChanged = { [weak self] in
+            self?.authorization.refreshPermissions()
+            self?.refreshShortcutAvailability()
+        }
         monitor.onEvent = { [weak self] in self?.observeHoldEvent($0) }
         monitor.onShortcutDown = { [weak self] in self?.beginHold(.shortcut) }
         monitor.onShortcutUp = { [weak self] in self?.releaseHold(.shortcut) }
@@ -50,10 +62,7 @@ final class TriggerSessionService {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                if self.store.isReady, !self.readyWasSeen {
-                    self.readyWasSeen = true
-                    self.frontChanged()
-                }
+                self.frontChanged()
                 self.entry.refresh()
                 if !self.store.configuration.preferences.isEnabled && !self.authorization.isPending {
                     self.invalidate()
@@ -78,7 +87,8 @@ final class TriggerSessionService {
     }
 
     private func isOwnShortcut(_ event: NSEvent) -> Bool {
-        guard let recorded = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar),
+        guard KeyboardShortcuts.isEnabled(for: .toggleFloatingInputBar),
+            let recorded = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar),
             let pressed = KeyboardShortcuts.Shortcut(event: event)
         else { return false }
         return recorded == pressed
@@ -88,7 +98,7 @@ final class TriggerSessionService {
         if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == clipboardPasteEventTag { return }
         let relevant = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let previous = previousModifiers
-        if event.type == .flagsChanged { previousModifiers = relevant }
+        previousModifiers = relevant
         if authorization.isPending,
             NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences"
         {
@@ -100,19 +110,21 @@ final class TriggerSessionService {
         }
         switch event.type {
         case .flagsChanged:
-            if hold.trigger == .shortcut {
-                let allowed = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar)?.modifiers ?? []
-                if !relevant.isSubset(of: allowed) { invalidate() }
-                return
-            }
-            let modifier = NSEvent.ModifierFlags(rawValue: store.configuration.preferences.clickModifier.mask)
-            if hold.trigger == .modifier && hold.phase != .waitingForModifiers && hold.phase != .inserting {
-                if relevant.isEmpty { releaseHold(.modifier) } else if relevant != modifier { invalidate() }
-            } else if relevant == modifier && previous != modifier {
-                beginHold(.modifier)
+            let allowed = KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar)?.modifiers
+                .intersection([.command, .option, .control, .shift]).rawValue
+            switch hold.modifierAction(
+                current: relevant.rawValue, previous: previous.rawValue,
+                configured: store.configuration.preferences.clickModifier.mask, shortcutModifiers: allowed)
+            {
+            case .begin: beginHold(.modifier)
+            case .release: if let source = hold.trigger { releaseHold(source) }
+            case .cancel: invalidate()
+            case .none: break
             }
         case .keyDown:
-            if isOwnShortcut(event) { beginHold(.shortcut) } else if hold.id != nil { invalidate() }
+            if isOwnShortcut(event) {
+                if !event.isARepeat { beginHold(.shortcut) }
+            } else if hold.id != nil { invalidate() }
         case .keyUp:
             if hold.trigger == .shortcut,
                 Int(event.keyCode) == KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar)?.carbonKeyCode
@@ -144,6 +156,7 @@ final class TriggerSessionService {
             let profile = profile(for: target), profile.canTrigger(source),
             let token = hold.begin(source)
         else { return }
+        notice = ""
         let mouse = NSEvent.mouseLocation
         let top = NSScreen.screens.first?.frame.maxY ?? 0
         let mode = store.configuration.preferences.menuAnchorMode
@@ -164,8 +177,9 @@ final class TriggerSessionService {
             }
             let anchor = MenuAnchor(
                 mode: mode, mouse: mouse, caretBounds: captured.caretBounds,
-                primaryScreenTop: top, screens: screens)
+                primaryScreenTop: top, screens: screens, editorBounds: captured.editorBounds)
             if anchor.usedMouseFallback { notice = "当前软件未提供有效光标位置，已改用鼠标位置展开。" }
+            if anchor.usedEditorFallback { notice = "当前光标位置超出输入框，已在输入框内展开。" }
             guard hold.show(token),
                 floating.show(
                     profile: profile, at: anchor.point,
@@ -202,13 +216,18 @@ final class TriggerSessionService {
         }
         floating.hide()
         holdTask?.cancel()
+        let shortcutKey = source == .shortcut
+            ? KeyboardShortcuts.getShortcut(for: .toggleFloatingInputBar)?.carbonKeyCode : nil
         holdTask = Task {
             let released = await waitForModifierRelease(
-                released: { NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty },
+                released: {
+                    NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+                        && shortcutKey.map { !CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0)) } != false
+                },
                 current: { self.hold.isCurrent(token) })
             guard released else {
                 if hold.isCurrent(token) {
-                    notice = "修饰键尚未松开，已取消粘贴。"
+                    notice = "触发键尚未全部松开，已取消粘贴。"
                     invalidate()
                 }
                 return
@@ -224,6 +243,7 @@ final class TriggerSessionService {
     }
 
     private func frontChanged() {
+        defer { refreshShortcutAvailability() }
         let next = NSWorkspace.shared.frontmostApplication
         let checking = authorization.isPending || authorization.guideVisible
         authorization.refreshPermissions()
@@ -237,7 +257,16 @@ final class TriggerSessionService {
         }
         if let target, next?.isEqual(target) == true, !target.isTerminated { return }
         invalidate()
+        previousModifiers = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift])
         target = next
+    }
+
+    private func refreshShortcutAvailability() {
+        monitor.setShortcutEnabled(
+            sessionActive && store.isReady && store.configuration.preferences.isEnabled
+                && authorization.authorizationStep == .ready && !authorization.isRestarting
+                && target?.bundleIdentifier != Bundle.main.bundleIdentifier
+                && target.map { profile(for: $0)?.canTrigger(.shortcut) == true } == true)
     }
 
     func invalidate() {

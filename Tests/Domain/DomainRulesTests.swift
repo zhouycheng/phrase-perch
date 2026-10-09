@@ -144,6 +144,52 @@ final class DomainRulesTests: PresentationTestCase {
         XCTAssertTrue(session.isCurrent(third))
     }
 
+    func testModifierTriggersRequireANewPressAndCancelMixedKeys() throws {
+        for modifier in ClickModifier.allCases {
+            let mask = modifier.mask
+            let extra = modifier == .option ? ClickModifier.command.mask : ClickModifier.option.mask
+            var session = HoldMenuSession()
+            XCTAssertEqual(session.modifierAction(current: mask, previous: 0, configured: mask, shortcutModifiers: nil), .begin)
+            XCTAssertEqual(session.modifierAction(current: mask, previous: mask, configured: mask, shortcutModifiers: nil), .none)
+            XCTAssertEqual(session.modifierAction(current: mask, previous: mask | extra, configured: mask, shortcutModifiers: nil), .none)
+            let token = try XCTUnwrap(session.begin(.modifier))
+            for choosing in [false, true] {
+                if choosing { XCTAssertTrue(session.show(token)) }
+                XCTAssertEqual(session.modifierAction(current: mask, previous: 0, configured: mask, shortcutModifiers: nil), .none)
+                XCTAssertEqual(session.modifierAction(current: 0, previous: mask, configured: mask, shortcutModifiers: nil), .release)
+                XCTAssertEqual(session.modifierAction(current: mask | extra, previous: mask, configured: mask, shortcutModifiers: nil), .cancel)
+            }
+            session.cancel()
+            XCTAssertEqual(session.modifierAction(current: mask, previous: mask | extra, configured: mask, shortcutModifiers: nil), .none)
+            XCTAssertEqual(session.modifierAction(current: mask, previous: 0, configured: mask, shortcutModifiers: nil), .begin)
+        }
+    }
+
+    func testShortcutReleasesWithEitherKeyOrderAndRejectsExtraModifiers() throws {
+        let command = ClickModifier.command.mask
+        let option = ClickModifier.option.mask
+        for allowed in [UInt(0), command, command | option] {
+            var session = HoldMenuSession()
+            let token = try XCTUnwrap(session.begin(.shortcut))
+            XCTAssertTrue(session.show(token))
+            XCTAssertEqual(session.modifierAction(current: allowed, previous: allowed, configured: option, shortcutModifiers: allowed), .none)
+            XCTAssertEqual(session.modifierAction(current: allowed | ClickModifier.shift.mask, previous: allowed, configured: option, shortcutModifiers: allowed), .cancel)
+            XCTAssertEqual(session.modifierAction(current: allowed, previous: allowed, configured: option, shortcutModifiers: nil), .cancel)
+            if allowed != 0 {
+                XCTAssertEqual(session.modifierAction(current: 0, previous: allowed, configured: option, shortcutModifiers: allowed), .release)
+            }
+            if allowed == command | option {
+                for remaining in [command, option] {
+                    XCTAssertEqual(session.modifierAction(current: remaining, previous: allowed, configured: option, shortcutModifiers: allowed), .release)
+                }
+            }
+            XCTAssertEqual(session.release(.shortcut, selection: UUID()), token)
+            XCTAssertEqual(session.modifierAction(current: 0, previous: allowed, configured: option, shortcutModifiers: allowed), .none)
+            XCTAssertTrue(session.commit(token))
+            XCTAssertEqual(session.modifierAction(current: 0, previous: allowed, configured: option, shortcutModifiers: allowed), .none)
+        }
+    }
+
     func testMenuClosesOnlyAfterCompleteInsertionOrDispatch() {
         for result in [InsertionResult.insertedVerified, .dispatchedUnverified] { XCTAssertTrue(result.closesMenu) }
         for result in [
@@ -412,5 +458,53 @@ final class DomainRulesTests: PresentationTestCase {
                 mode: .mouse, mouse: mouse, caretBounds: bounds,
                 primaryScreenTop: 900, screens: screens
             ).point, mouse)
+    }
+
+    func testCaretOutsideEditorUsesVisibleEditorInsteadOfDistantMouse() {
+        let editor = CGRect(x: 428, y: 48, width: 234, height: 31)
+        let screen = CGRect(x: 0, y: 0, width: 1836, height: 1050)
+        let mouse = CGPoint(x: 1500, y: 300)
+        for caret: CGRect? in [
+            CGRect(x: 1191.979, y: 32, width: 0, height: 16),
+            CGRect(x: 500, y: 200, width: 2, height: 18),
+            CGRect(x: 500, y: 48, width: 0, height: 300), nil, .zero,
+        ] {
+            let anchor = MenuAnchor(
+                mode: .caret, mouse: mouse, caretBounds: caret, primaryScreenTop: 1080,
+                screens: [screen], editorBounds: editor)
+            XCTAssertEqual(anchor.point, CGPoint(x: 545, y: 1016.5))
+            XCTAssertTrue(anchor.usedEditorFallback)
+            XCTAssertFalse(anchor.usedMouseFallback)
+        }
+        let valid = MenuAnchor(
+            mode: .caret, mouse: mouse, caretBounds: CGRect(x: 500, y: 50, width: 2, height: 18),
+            primaryScreenTop: 1080, screens: [screen], editorBounds: editor)
+        XCTAssertEqual(valid.point, CGPoint(x: 501, y: 1021))
+        XCTAssertFalse(valid.usedEditorFallback)
+        let atMouse = MenuAnchor(
+            mode: .mouse, mouse: mouse, caretBounds: nil, primaryScreenTop: 1080,
+            screens: [screen], editorBounds: editor)
+        XCTAssertEqual(atMouse.point, mouse)
+        XCTAssertFalse(atMouse.usedEditorFallback)
+    }
+
+    func testEditorFallbackClipsToVisibleScreenAndRejectsInvalidBounds() {
+        let screens = [CGRect(x: -1440, y: -200, width: 1440, height: 900)]
+        let mouse = CGPoint(x: -200, y: 300)
+        let clipped = MenuAnchor(
+            mode: .caret, mouse: mouse, caretBounds: nil, primaryScreenTop: 900,
+            screens: screens, editorBounds: CGRect(x: -1500, y: 300, width: 200, height: 40))
+        XCTAssertEqual(clipped.point, CGPoint(x: -1370, y: 580))
+        XCTAssertTrue(clipped.usedEditorFallback)
+        for editor: CGRect? in [nil, .zero, CGRect(x: CGFloat.infinity, y: 0, width: 20, height: 20),
+            CGRect(x: 2000, y: 0, width: 200, height: 20)]
+        {
+            let fallback = MenuAnchor(
+                mode: .caret, mouse: mouse, caretBounds: nil, primaryScreenTop: 900,
+                screens: screens, editorBounds: editor)
+            XCTAssertEqual(fallback.point, mouse)
+            XCTAssertTrue(fallback.usedMouseFallback)
+            XCTAssertFalse(fallback.usedEditorFallback)
+        }
     }
 }

@@ -246,10 +246,13 @@ final class NativePresentationTests: PresentationTestCase {
         }
         for policy in [NSApplication.ActivationPolicy.regular, .accessory] {
             NSApp.setActivationPolicy(policy)
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
+            // AppKit applies the Dock policy asynchronously; open through the app after that transition.
+            try await Task.sleep(for: .milliseconds(100))
+            coordinator.openMainWindow()
             root.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(150))
+            XCTAssertTrue(NSApp.isActive)
+            XCTAssertTrue(window.isKeyWindow)
             for original in [snippet.title, snippet.text] {
                 let editor = try focus(original)
                 try key("a")

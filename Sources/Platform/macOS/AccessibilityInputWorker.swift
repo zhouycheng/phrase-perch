@@ -9,6 +9,7 @@ actor AccessibilityInputWorker: InputTargetWorker {
     private var operationID: UUID?
     private var pid: pid_t = 0
     private var originalSelection: NSRange?
+    private let log = Logger(subsystem: "local.FloatingInputBar", category: "input-target")
 
     private func value(_ object: AXUIElement, _ attribute: CFString) -> CFTypeRef? {
         var result: CFTypeRef?
@@ -22,10 +23,17 @@ actor AccessibilityInputWorker: InputTargetWorker {
     private func focused(_ pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.4)
-        guard let object = value(app, kAXFocusedUIElementAttribute as CFString),
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.4)
+        let appFocus = value(app, kAXFocusedUIElementAttribute as CFString)
+        guard let object = appFocus ?? value(system, kAXFocusedUIElementAttribute as CFString),
             CFGetTypeID(object) == AXUIElementGetTypeID()
         else { return nil }
         let target = unsafeDowncast(object, to: AXUIElement.self)
+        if appFocus == nil {
+            var targetPID: pid_t = 0
+            guard AXUIElementGetPid(target, &targetPID) == .success, targetPID == pid else { return nil }
+        }
         AXUIElementSetMessagingTimeout(target, 0.4)
         return target
     }
@@ -72,18 +80,54 @@ actor AccessibilityInputWorker: InputTargetWorker {
         guard AXValueGetType(ax) == .cgRect, AXValueGetValue(ax, .cgRect, &rect) else { return nil }
         return rect
     }
-    func captureTarget(id: UUID, pid: pid_t, position: CGPoint, mode: MenuAnchorMode) -> CapturedInputTarget? {
-        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled(), let editor = focused(pid),
-            (try? validateEditor(editor)) != nil, let selection = selectedRange(editor)
+    private func editorBounds(_ editor: AXUIElement) -> CGRect? {
+        guard let position = value(editor, kAXPositionAttribute as CFString),
+            let size = value(editor, kAXSizeAttribute as CFString),
+            CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID()
         else { return nil }
-        if mode == .mouse && !mouseHitsEditor(editor, pid: pid, position: position) { return nil }
+        var origin = CGPoint.zero
+        var dimensions = CGSize.zero
+        guard AXValueGetValue(unsafeDowncast(position, to: AXValue.self), .cgPoint, &origin),
+            AXValueGetValue(unsafeDowncast(size, to: AXValue.self), .cgSize, &dimensions)
+        else { return nil }
+        return CGRect(origin: origin, size: dimensions)
+    }
+    func captureTarget(id: UUID, pid: pid_t, position: CGPoint, mode: MenuAnchorMode) -> CapturedInputTarget? {
+        guard !Task.isCancelled, AXIsProcessTrusted(), !IsSecureEventInputEnabled() else {
+            log.info("Capture rejected: cancelled or input authorization unavailable")
+            return nil
+        }
+        guard let editor = focused(pid) else {
+            log.info("Capture rejected: focused element unavailable")
+            return nil
+        }
+        do { try validateEditor(editor) } catch {
+            log.info("Capture rejected: editor is not an ordinary writable input")
+            return nil
+        }
+        guard let selection = selectedRange(editor) else {
+            log.info("Capture rejected: text selection unavailable")
+            return nil
+        }
+        if mode == .mouse && !mouseHitsEditor(editor, pid: pid, position: position) {
+            log.info("Capture rejected: pointer is outside the focused input")
+            return nil
+        }
+        let caret = mode == .caret ? caretBounds(editor, selection: selection) : nil
+        let bounds = mode == .caret ? editorBounds(editor) : nil
+        guard !Task.isCancelled, let current = focused(pid), CFEqual(editor, current),
+            selectedRange(editor) == selection
+        else {
+            log.info("Capture rejected: cancelled or focus or selection changed")
+            return nil
+        }
         // Retain the input before showing a panel; never recapture at release.
         element = editor
         self.pid = pid
         operationID = id
         originalSelection = selection
         return CapturedInputTarget(
-            id: id, caretBounds: mode == .caret ? caretBounds(editor, selection: selection) : nil)
+            id: id, caretBounds: caret, editorBounds: bounds)
     }
     private func mouseHitsEditor(_ editor: AXUIElement, pid: pid_t, position: CGPoint) -> Bool {
         let app = AXUIElementCreateApplication(pid)
@@ -109,7 +153,6 @@ actor AccessibilityInputWorker: InputTargetWorker {
         guard self.pid == pid, readyToPaste(operationID), let element else {
             throw InputFailure("原输入框、选区或权限已变化，已取消粘贴")
         }
-        try validateEditor(element)
         return PreparedInput(
             before: value(element, kAXValueAttribute as CFString) as? String,
             selection: originalSelection)
@@ -132,6 +175,8 @@ actor AccessibilityInputWorker: InputTargetWorker {
         if operationID == id {
             element = nil
             operationID = nil
+            originalSelection = nil
+            pid = 0
         }
     }
 }

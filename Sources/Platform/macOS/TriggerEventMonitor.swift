@@ -16,6 +16,7 @@ final class TriggerEventMonitor {
     private var mouseMonitor: Any?
     private var localMonitor: Any?
     func start() {
+        KeyboardShortcuts.disable(.toggleFloatingInputBar)
         let workspace = NSWorkspace.shared.notificationCenter
         observe(workspace, NSWorkspace.didActivateApplicationNotification) { [weak self] in self?.onFrontChanged?() }
         observe(workspace, NSWorkspace.didTerminateApplicationNotification) { [weak self] in self?.onFrontChanged?() }
@@ -57,6 +58,10 @@ final class TriggerEventMonitor {
         }
         KeyboardShortcuts.onKeyDown(for: .toggleFloatingInputBar) { [weak self] in self?.onShortcutDown?() }
         KeyboardShortcuts.onKeyUp(for: .toggleFloatingInputBar) { [weak self] in self?.onShortcutUp?() }
+    }
+    func setShortcutEnabled(_ enabled: Bool) {
+        if enabled { KeyboardShortcuts.enable(.toggleFloatingInputBar) }
+        else { KeyboardShortcuts.disable(.toggleFloatingInputBar) }
     }
     private func observe(
         _ center: NotificationCenter, _ name: Notification.Name,

@@ -44,7 +44,7 @@ struct TriggerPreferencesCardView: View {
                 SettingsExplanationView(
                     text: viewModel.menuAnchorMode == .mouse
                         ? "先点入输入框，将鼠标放在其中。按住触发键展开，移到文案按钮，松开后粘贴；未选中则取消。"
-                        : "先点入输入框。按住触发键从输入光标处展开，再移动鼠标选择文案，松开后粘贴。无法定位光标时改用鼠标位置。")
+                        : "先点入输入框。按住触发键从输入光标处展开，再移动鼠标选择文案，松开后粘贴。光标位置不可用时，在输入框内展开；输入框位置也不可用时改用鼠标位置。")
                 SettingsControlRow("快捷键") {
                     KeyboardShortcuts.Recorder(for: .toggleFloatingInputBar)
                         .accessibilityLabel("按住展开的快捷键")
