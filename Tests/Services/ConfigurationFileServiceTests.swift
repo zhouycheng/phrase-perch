@@ -17,6 +17,9 @@ final class ConfigurationFileServiceTests: XCTestCase {
             editing: ProfileEditingService(repository: repository), dialog: dialog)
         let original = repository.configuration
         var imported = AppConfiguration()
+        imported.preferences.titleGenerationProvider = .codexCLI
+        imported.preferences.codexExecutablePath = "/test/codex"
+        imported.preferences.titleModel = "saved-proxy-model"
         imported.profiles = [
             AppProfile(
                 application: ApplicationIdentity(bundleIdentifier: "test.import", fallbackBundlePath: nil),
@@ -32,6 +35,10 @@ final class ConfigurationFileServiceTests: XCTestCase {
         await service.importConfiguration(from: url)
         XCTAssertEqual(repository.configuration, imported)
         XCTAssertEqual(repository.saveStatus, "已保存")
+        let exportURL = directory.appendingPathComponent("export.json")
+        await repository.export(to: exportURL)
+        let exported = try JSONDecoder().decode(AppConfiguration.self, from: Data(contentsOf: exportURL))
+        XCTAssertEqual(exported, imported)
         try Data("invalid JSON".utf8).write(to: url)
         await service.importConfiguration(from: url)
         XCTAssertEqual(repository.issue?.operation, .importFile)

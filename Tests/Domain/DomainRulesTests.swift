@@ -252,8 +252,12 @@ final class DomainRulesTests: PresentationTestCase {
         var preferences = try JSONDecoder().decode(Preferences.self, from: legacy)
         XCTAssertEqual(preferences.titleAPIBaseURL, Preferences.defaultTitleAPIBaseURL)
         XCTAssertEqual(preferences.titleModel, "")
+        XCTAssertEqual(preferences.titleGenerationProvider, .cliProxyAPI)
+        XCTAssertEqual(preferences.codexExecutablePath, "")
         preferences.titleAPIBaseURL = "http://localhost:1234/v1"
         preferences.titleModel = "local-model"
+        preferences.titleGenerationProvider = .codexCLI
+        preferences.codexExecutablePath = "/test/codex"
         XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences)), preferences)
     }
 

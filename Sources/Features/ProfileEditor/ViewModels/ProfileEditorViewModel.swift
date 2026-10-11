@@ -11,7 +11,7 @@ final class ProfileEditorViewModel {
     private var titleTask: Task<Void, Never>?
     private var titleGeneration = 0
     private var titleSnapshot: Snippet?
-    private var titleSettings: (address: String, model: String)?
+    private var titleSettings: Preferences?
     private(set) var isGeneratingTitle = false
     private(set) var titleGenerationMessage: String?
     private(set) var session: SnippetEditorSession
@@ -57,11 +57,13 @@ final class ProfileEditorViewModel {
     var textIssue: String? { selectedSnippet.flatMap { SnippetValidator.textIssue($0.text) } }
     var canGenerateTitle: Bool {
         repository.isReady && !isGeneratingTitle
-            && !repository.configuration.preferences.titleModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (repository.configuration.preferences.titleGenerationProvider == .codexCLI
+                || !repository.configuration.preferences.titleModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && selectedSnippet.map { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && SnippetValidator.textIssue($0.text) == nil } == true
     }
     var titleGenerationHelp: String {
-        repository.configuration.preferences.titleModel.isEmpty
+        repository.configuration.preferences.titleGenerationProvider == .cliProxyAPI
+            && repository.configuration.preferences.titleModel.isEmpty
             ? "请先在设置中选择并保存标题生成模型。" : "根据正文生成4至6字的中文标题"
     }
     func title(_ id: UUID) -> String { profile?.buttons.first { $0.id == id }?.title ?? "" }
@@ -90,11 +92,19 @@ final class ProfileEditorViewModel {
         if let snapshot = titleSnapshot {
             let preferences = repository.configuration.preferences
             if selectedSnippet?.id != snapshot.id || selectedSnippet?.title != snapshot.title
-                || selectedSnippet?.text != snapshot.text || preferences.titleAPIBaseURL != titleSettings?.address
-                || preferences.titleModel != titleSettings?.model
+                || selectedSnippet?.text != snapshot.text || !sameTitleSettings(preferences)
             { cancelTitleGeneration() }
         }
         if saveStatus != "保存失败" { showSaveIssue = false }
+    }
+    private func sameTitleSettings(_ preferences: Preferences) -> Bool {
+        guard let titleSettings, preferences.titleGenerationProvider == titleSettings.titleGenerationProvider else { return false }
+        switch preferences.titleGenerationProvider {
+        case .cliProxyAPI:
+            return preferences.titleAPIBaseURL == titleSettings.titleAPIBaseURL && preferences.titleModel == titleSettings.titleModel
+        case .codexCLI:
+            return preferences.codexExecutablePath == titleSettings.codexExecutablePath
+        }
     }
     func generateTitle() {
         guard canGenerateTitle, let snippet = selectedSnippet else { return }
@@ -102,12 +112,12 @@ final class ProfileEditorViewModel {
         let token = titleGeneration
         let preferences = repository.configuration.preferences
         titleSnapshot = snippet
-        titleSettings = (preferences.titleAPIBaseURL, preferences.titleModel)
+        titleSettings = preferences
         isGeneratingTitle = true
         titleTask = Task { [weak self, titleService] in
             do {
                 let title = try await titleService.generateTitle(
-                    for: snippet.text, address: preferences.titleAPIBaseURL, model: preferences.titleModel)
+                    for: snippet.text, preferences: preferences)
                 guard let self, !Task.isCancelled, token == self.titleGeneration else { return }
                 self.finishTitleGeneration()
                 self.editing.editSnippet(profileID: self.profileID, snippetID: snippet.id) { $0.title = title }

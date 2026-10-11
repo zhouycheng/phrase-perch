@@ -40,7 +40,9 @@ final class TitleGenerationServiceTests: XCTestCase {
         }
         let models = try await service.models(at: Preferences.defaultTitleAPIBaseURL)
         XCTAssertEqual(models, ["model-a", "model-b"])
-        let title = try await service.generateTitle(for: "帮我解释这段代码", address: Preferences.defaultTitleAPIBaseURL, model: "model-a")
+        var preferences = Preferences()
+        preferences.titleModel = "model-a"
+        let title = try await service.generateTitle(for: "帮我解释这段代码", preferences: preferences)
         XCTAssertEqual(title, "代码解释")
     }
 

@@ -33,14 +33,18 @@ final class NativePresentationTests: PresentationTestCase {
                 XCTAssertEqual(root.bounds.width, size.width, accuracy: 1)
                 window.close()
             }
-            let card = NSHostingView(rootView:
-                TitleGenerationPreferencesCardView(viewModel: coordinator.preferencesViewModel)
-                    .padding(26).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .background(Color(nsColor: .windowBackgroundColor)))
-            card.frame = CGRect(x: 0, y: 0, width: size.width - 68, height: 330)
-            card.appearance = NSAppearance(named: .darkAqua)
-            try await Task.sleep(for: .milliseconds(80))
-            try savePreview(card, name: "ai-card-\(Int(size.width)).png")
+            for provider in TitleGenerationProvider.allCases {
+                store.update { $0.preferences.titleGenerationProvider = provider }
+                coordinator.preferencesViewModel.loadTitleSettings()
+                let card = NSHostingView(rootView:
+                    TitleGenerationPreferencesCardView(viewModel: coordinator.preferencesViewModel)
+                        .padding(26).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(Color(nsColor: .windowBackgroundColor)))
+                card.frame = CGRect(x: 0, y: 0, width: size.width - 68, height: 390)
+                card.appearance = NSAppearance(named: .darkAqua)
+                try await Task.sleep(for: .milliseconds(80))
+                try savePreview(card, name: "ai-card-\(provider.rawValue)-\(Int(size.width)).png")
+            }
         }
     }
 

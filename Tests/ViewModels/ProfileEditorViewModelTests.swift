@@ -4,6 +4,53 @@ import XCTest
 
 final class ProfileEditorViewModelTests: XCTestCase {
     @MainActor
+    func testCodexGeneratesWithoutProxyModelAndInvalidatesPendingResults() async throws {
+        for action in ["success", "title", "text", "selection", "settings", "provider", "stop"] {
+            let stub = try StubCodexCLI(generation: action == "success" ? "printf '代码解释\\n'" : "exec /bin/sleep 20")
+            defer { stub.cleanup() }
+            let directory = stub.directory.appendingPathComponent("configuration")
+            let repository = ConfigurationRepository(directory: directory)
+            for _ in 0..<100 where !repository.isReady { try await Task.sleep(for: .milliseconds(10)) }
+            let snippets = [Snippet(title: "原标题", text: "解释代码"), Snippet(title: "第二条", text: "正文")]
+            let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.codex", fallbackBundlePath: nil),
+                displayName: "Test", buttons: snippets)
+            repository.update {
+                $0.profiles = [profile]
+                $0.preferences.titleGenerationProvider = .codexCLI
+                $0.preferences.codexExecutablePath = stub.executable.path
+            }
+            let model = ProfileEditorViewModel(profileID: profile.id, repository: repository,
+                editing: ProfileEditingService(repository: repository), titleService: TitleGenerationService(codex: stub.runner))
+            defer { model.stop() }
+            XCTAssertTrue(model.canGenerateTitle)
+            XCTAssertEqual(repository.configuration.preferences.titleModel, "")
+            model.generateTitle()
+            for _ in 0..<100 where !FileManager.default.fileExists(atPath: stub.directory.appendingPathComponent("stdin").path) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            switch action {
+            case "title": model.setTitle("手动标题", id: snippets[0].id)
+            case "text": model.setText("新正文", id: snippets[0].id)
+            case "selection": model.select(snippets[1].id)
+            case "settings": repository.update { $0.preferences.codexExecutablePath = "/new/codex" }
+            case "provider": repository.update { $0.preferences.titleGenerationProvider = .cliProxyAPI }
+            case "stop": model.stop()
+            default: break
+            }
+            for _ in 0..<100 where model.isGeneratingTitle { try await Task.sleep(for: .milliseconds(10)) }
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertFalse(model.isGeneratingTitle)
+            XCTAssertNil(model.titleGenerationMessage)
+            let expected = action == "success" ? "代码解释" : action == "title" ? "手动标题" : "原标题"
+            XCTAssertEqual(repository.configuration.profiles[0].buttons[0].title, expected, action)
+            let saved = await repository.flush()
+            XCTAssertTrue(saved)
+            let readback = try await JSONConfigurationStorage(directory: directory).load()
+            XCTAssertEqual(readback.profiles[0].buttons[0].title, expected)
+        }
+    }
+
+    @MainActor
     func testGeneratedTitleUsesExistingSaveFlowAndFailurePreservesOriginal() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
