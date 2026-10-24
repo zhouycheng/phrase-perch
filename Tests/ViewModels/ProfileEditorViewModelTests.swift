@@ -4,170 +4,80 @@ import XCTest
 
 final class ProfileEditorViewModelTests: XCTestCase {
     @MainActor
-    func testCodexGeneratesWithoutProxyModelAndInvalidatesPendingResults() async throws {
-        for action in ["success", "title", "text", "selection", "settings", "provider", "stop"] {
-            let stub = try StubCodexCLI(generation: action == "success" ? "printf '代码解释\\n'" : "exec /bin/sleep 20")
-            defer { stub.cleanup() }
-            let directory = stub.directory.appendingPathComponent("configuration")
-            let repository = ConfigurationRepository(directory: directory)
-            for _ in 0..<100 where !repository.isReady { try await Task.sleep(for: .milliseconds(10)) }
-            let snippets = [Snippet(title: "原标题", text: "解释代码"), Snippet(title: "第二条", text: "正文")]
-            let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.codex", fallbackBundlePath: nil),
-                displayName: "Test", buttons: snippets)
-            repository.update {
-                $0.profiles = [profile]
-                $0.preferences.titleGenerationProvider = .codexCLI
-                $0.preferences.codexExecutablePath = stub.executable.path
-            }
-            let model = ProfileEditorViewModel(profileID: profile.id, repository: repository,
-                editing: ProfileEditingService(repository: repository), titleService: TitleGenerationService(codex: stub.runner))
-            defer { model.stop() }
-            XCTAssertTrue(model.canGenerateTitle)
-            XCTAssertEqual(repository.configuration.preferences.titleModel, "")
-            model.generateTitle()
-            for _ in 0..<100 where !FileManager.default.fileExists(atPath: stub.directory.appendingPathComponent("stdin").path) {
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            switch action {
-            case "title": model.setTitle("手动标题", id: snippets[0].id)
-            case "text": model.setText("新正文", id: snippets[0].id)
-            case "selection": model.select(snippets[1].id)
-            case "settings": repository.update { $0.preferences.codexExecutablePath = "/new/codex" }
-            case "provider": repository.update { $0.preferences.titleGenerationProvider = .cliProxyAPI }
-            case "stop": model.stop()
-            default: break
-            }
-            for _ in 0..<100 where model.isGeneratingTitle { try await Task.sleep(for: .milliseconds(10)) }
-            try await Task.sleep(for: .milliseconds(30))
-            XCTAssertFalse(model.isGeneratingTitle)
-            XCTAssertNil(model.titleGenerationMessage)
-            let expected = action == "success" ? "代码解释" : action == "title" ? "手动标题" : "原标题"
-            XCTAssertEqual(repository.configuration.profiles[0].buttons[0].title, expected, action)
+    func testTriggerButtonsKeepOneEntryAndPersistPerApplication() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = ConfigurationRepository(directory: directory)
+        for _ in 0..<100 where !repository.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        let profiles = ["first", "second"].map {
+            AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.\($0)", fallbackBundlePath: nil), displayName: $0)
+        }
+        repository.update { $0.profiles = profiles }
+        let models = profiles.map {
+            ProfileEditorViewModel(profileID: $0.id, repository: repository, editing: ProfileEditingService(repository: repository))
+        }
+        defer { models.forEach { $0.stop() } }
+        let model = models[0]
+        model.toggleModifierTrigger()
+        XCTAssertEqual(model.displayMode, .modifierClick)
+        model.toggleShortcutTrigger()
+        XCTAssertEqual(model.displayMode, .both)
+        model.toggleModifierTrigger()
+        XCTAssertEqual(model.displayMode, .shortcutOnly)
+        model.toggleShortcutTrigger()
+        XCTAssertEqual(model.displayMode, .shortcutOnly)
+        model.toggleModifierTrigger()
+        XCTAssertEqual(model.displayMode, .both)
+        model.toggleShortcutTrigger()
+        XCTAssertEqual(model.displayMode, .modifierClick)
+        for mode in DisplayMode.allCases {
+            model.displayMode = mode
+            XCTAssertEqual(models[1].displayMode, .modifierClick)
             let saved = await repository.flush()
             XCTAssertTrue(saved)
             let readback = try await JSONConfigurationStorage(directory: directory).load()
-            XCTAssertEqual(readback.profiles[0].buttons[0].title, expected)
+            XCTAssertEqual(readback.profiles[0].displayMode, mode)
+            XCTAssertEqual(readback.profiles[1].displayMode, .modifierClick)
         }
     }
 
     @MainActor
-    func testGeneratedTitleUsesExistingSaveFlowAndFailurePreservesOriginal() async throws {
+    func testHeaderCreationUsesCurrentGroupAndBreadcrumbReturnsToRoot() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let repository = ConfigurationRepository(directory: directory)
         for _ in 0..<100 where !repository.isReady { try await Task.sleep(for: .milliseconds(10)) }
-        let snippet = Snippet(title: "原标题", text: "解释代码的实现过程")
-        let profile = AppProfile(
-            application: ApplicationIdentity(bundleIdentifier: "test.title", fallbackBundlePath: nil), displayName: "Test", buttons: [snippet])
+        let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.group", fallbackBundlePath: nil), displayName: "Test")
         repository.update { $0.profiles = [profile] }
-        let requested = expectation(description: "Only one generation request")
-        requested.assertForOverFulfill = true
-        let service = StubTitleURLProtocol.service { _ in
-            requested.fulfill()
-            return (200, Data(#"{"choices":[{"message":{"content":"代码解释"}}]}"#.utf8))
-        }
-        let model = ProfileEditorViewModel(
-            profileID: profile.id, repository: repository, editing: ProfileEditingService(repository: repository), titleService: service)
+        let model = ProfileEditorViewModel(profileID: profile.id, repository: repository, editing: ProfileEditingService(repository: repository))
         defer { model.stop() }
-        XCTAssertFalse(model.canGenerateTitle)
-        repository.update { $0.preferences.titleModel = "test-model" }
-        XCTAssertTrue(model.canGenerateTitle)
-        model.generateTitle()
-        model.generateTitle()
-        for _ in 0..<100 where model.isGeneratingTitle { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertEqual(model.selectedSnippet?.title, "代码解释")
-        XCTAssertNil(model.titleGenerationMessage)
+        model.addGroup()
+        let parent = try XCTUnwrap(model.nodes.first).id
+        model.openGroup(parent)
+        model.addGroup()
+        let child = try XCTUnwrap(model.nodes.first).id
+        model.openGroup(child)
+        model.addSnippet()
+        XCTAssertEqual(model.groupPath, [parent, child])
+        XCTAssertEqual(model.nodes.count, 1)
+        XCTAssertEqual(model.nodes.first?.id, model.selectedSnippet?.id)
+        model.openGroup(parent)
+        XCTAssertEqual(model.groupPath, [parent])
+        XCTAssertEqual(model.nodes.map(\.id), [child])
+        model.openGroup(nil)
+        XCTAssertTrue(model.groupPath.isEmpty)
+        XCTAssertEqual(model.nodes.map(\.id), [parent])
         let saved = await repository.flush()
         XCTAssertTrue(saved)
-        let readback = try await JSONConfigurationStorage(directory: directory).load()
-        XCTAssertEqual(readback.profiles.first?.buttons.first?.title, "代码解释")
-        XCTAssertEqual(readback.preferences.titleModel, "test-model")
-        let failed = ProfileEditorViewModel(
-            profileID: profile.id, repository: repository, editing: ProfileEditingService(repository: repository),
-            titleService: StubTitleURLProtocol.service { _ in (403, Data()) })
-        defer { failed.stop() }
-        failed.generateTitle()
-        for _ in 0..<100 where failed.isGeneratingTitle { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertEqual(failed.selectedSnippet?.title, "代码解释")
-        XCTAssertTrue(failed.titleGenerationMessage?.contains("鉴权") == true)
-        failed.setText(" \n ", id: snippet.id)
-        XCTAssertFalse(failed.canGenerateTitle)
-        XCTAssertNil(failed.titleGenerationMessage)
-        await fulfillment(of: [requested], timeout: 1)
     }
 
-    @MainActor
-    func testEditingSelectionDeletionAndStopInvalidatePendingTitle() async throws {
-        for action in ["title", "text", "selection", "page", "deletion", "stop", "settings", "import"] {
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            defer { try? FileManager.default.removeItem(at: directory) }
-            let repository = ConfigurationRepository(directory: directory)
-            for _ in 0..<100 where !repository.isReady { try await Task.sleep(for: .milliseconds(10)) }
-            let snippets = (0..<10).map { Snippet(title: "原标题\($0)", text: "正文\($0)") }
-            let profile = AppProfile(
-                application: ApplicationIdentity(bundleIdentifier: "test.pending", fallbackBundlePath: nil), displayName: "Test", buttons: snippets)
-            repository.update { $0.profiles = [profile]; $0.preferences.titleModel = "test-model" }
-            let started = expectation(description: "Request started for \(action)")
-            let model = ProfileEditorViewModel(
-                profileID: profile.id, repository: repository, editing: ProfileEditingService(repository: repository),
-                titleService: StubTitleURLProtocol.service { _ in
-                    started.fulfill()
-                    Thread.sleep(forTimeInterval: 0.15)
-                    return (200, Data(#"{"choices":[{"message":{"content":"过期标题"}}]}"#.utf8))
-                })
-            defer { model.stop() }
-            model.generateTitle()
-            await fulfillment(of: [started], timeout: 1)
-            switch action {
-            case "title": model.setTitle("手动标题", id: snippets[0].id)
-            case "text": model.setText("新正文", id: snippets[0].id)
-            case "selection": model.select(snippets[1].id)
-            case "page": model.showPage(1)
-            case "deletion": model.requestDeletion(snippets[0].id); model.confirmDeletion(snippets[0].id)
-            case "settings": repository.update { $0.preferences.titleModel = "new-model" }
-            case "import": repository.update { $0.profiles[0].buttons[0].text = "导入的新正文" }
-            default: model.stop()
-            }
-            XCTAssertFalse(model.isGeneratingTitle, action)
-            try await Task.sleep(for: .milliseconds(180))
-            XCTAssertFalse(repository.configuration.profiles[0].buttons.contains { $0.title == "过期标题" }, action)
-            XCTAssertNil(model.titleGenerationMessage, action)
-            if action == "title" { XCTAssertEqual(model.title(snippets[0].id), "手动标题") }
-        }
-    }
 
-    @MainActor
-    func testChangingProfileNavigationAndClosingWindowCancelGeneration() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let repository = ConfigurationRepository(directory: directory)
-        for _ in 0..<100 where !repository.isReady { try await Task.sleep(for: .milliseconds(10)) }
-        let profiles = (0..<2).map { index in
-            AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.title.\(index)", fallbackBundlePath: nil),
-                displayName: "Test", buttons: [Snippet(title: "原标题", text: "正文")])
-        }
-        repository.update { $0.profiles = profiles; $0.preferences.titleModel = "test-model" }
-        let dependencies = AppDependencies(repository: repository, titleService: StubTitleURLProtocol.service { _ in
-            Thread.sleep(forTimeInterval: 0.15)
-            return (200, Data(#"{"choices":[{"message":{"content":"过期标题"}}]}"#.utf8))
-        })
-        defer { dependencies.mainWindowViewModel.stop() }
-        let window = dependencies.mainWindowViewModel
-        let first = try XCTUnwrap(window.selectedEditor)
-        first.generateTitle()
-        window.selectProfile(profiles[1].id)
-        XCTAssertFalse(first.isGeneratingTitle)
-        let second = try XCTUnwrap(window.selectedEditor)
-        second.generateTitle()
-        window.page = .settings
-        XCTAssertFalse(second.isGeneratingTitle)
-        window.page = .home
-        second.generateTitle()
-        dependencies.mainWindow.windowWillClose(Notification(name: NSWindow.willCloseNotification))
-        XCTAssertFalse(second.isGeneratingTitle)
-        try await Task.sleep(for: .milliseconds(180))
-        XCTAssertTrue(repository.configuration.profiles.allSatisfy { $0.buttons[0].title == "原标题" })
-    }
+
+
+
+
+
+
 
     @MainActor
     func testEditingCommandsUseIDsAndKeepSelectionAfterConfirmation() async throws {

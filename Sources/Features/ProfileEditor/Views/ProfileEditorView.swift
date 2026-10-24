@@ -8,16 +8,11 @@ struct ProfileEditorView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 SnippetToolbarView(
-                    displayMode: $viewModel.displayMode, displayName: viewModel.displayName,
-                    addSnippet: viewModel.addSnippet)
-                SnippetRingPreviewView(
-                    snippets: viewModel.visibleSnippets, selectedID: viewModel.session.selectedID,
-                    select: viewModel.select, requestDeletion: viewModel.requestDeletion,
-                    addSnippet: viewModel.addSnippet
-                ) { id in
-                    SnippetActionsView(viewModel: viewModel, id: id)
-                }
-                SnippetPaginationView(viewModel: viewModel)
+                    displayMode: viewModel.displayMode,
+                    toggleModifier: viewModel.toggleModifierTrigger, toggleShortcut: viewModel.toggleShortcutTrigger,
+                    addSnippet: viewModel.addSnippet, addGroup: viewModel.addGroup)
+                GroupContentsView(viewModel: viewModel)
+
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             EditorStyle.separator.frame(width: 1)
@@ -27,10 +22,7 @@ struct ProfileEditorView: View {
                         SnippetTitleEditorView(
                             text: Binding(
                                 get: { viewModel.title(snippet.id) }, set: { viewModel.setTitle($0, id: snippet.id) }),
-                            issue: viewModel.titleIssue,
-                            isGenerating: viewModel.isGeneratingTitle, canGenerate: viewModel.canGenerateTitle,
-                            generationMessage: viewModel.titleGenerationMessage,
-                            generationHelp: viewModel.titleGenerationHelp, generate: viewModel.generateTitle)
+                            issue: viewModel.titleIssue)
                         Color.white.opacity(0.08).frame(height: 1)
                         SnippetBodyEditorView(
                             text: Binding(

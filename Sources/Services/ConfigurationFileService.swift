@@ -50,11 +50,18 @@ final class ConfigurationFileService {
         copy.application = application.identity
         copy.displayName = application.name
         copy.lastKnownBundlePath = url.path
-        copy.buttons = source.buttons.map { button in
-            var copy = button
-            copy.id = UUID()
-            return copy
+        let allIDs = source.buttons.map(\.id) + source.groups.map(\.id)
+        let replacements = Dictionary(uniqueKeysWithValues: allIDs.map { ($0, UUID()) })
+        func remap(_ nodes: [MenuNode]) -> [MenuNode] {
+            nodes.map { MenuNode(kind: $0.kind, id: replacements[$0.id]!) }
         }
+        copy.buttons = source.buttons.map { item in
+            var result = item; result.id = replacements[item.id]!; return result
+        }
+        copy.groups = source.groups.map { item in
+            var result = item; result.id = replacements[item.id]!; result.children = remap(item.children); return result
+        }
+        copy.rootNodes = remap(source.rootNodes)
         _ = editing.addProfile(copy)
     }
 

@@ -18,18 +18,16 @@ struct EditorRingLayout {
             return
         }
         let buttonSize = CGSize(width: buttonWidth, height: Self.buttonSize.height)
-        let minimumRadius = max(88, (buttonWidth + 6) / sqrt(3))
+        let ring = CircularButtonLayout.items(count: count, buttonSize: buttonSize)
+        let bounds = ring.reduce(CGRect(x: -24, y: -24, width: 48, height: 48)) { $0.union($1) }
         let canvasSize = CGSize(
-            width: max(size.width, minimumRadius * 2 + buttonWidth + 4),
-            height: max(size.height, minimumRadius * 2 + buttonSize.height + 48))
+            width: max(size.width, max(abs(bounds.minX), abs(bounds.maxX)) * 2 + 4),
+            height: max(size.height, max(abs(bounds.minY), abs(bounds.maxY)) * 2 + 48))
         self.canvasSize = canvasSize
-        let radius = max(0, min(140,
-            (canvasSize.width - buttonWidth - 4) / 2,
-            (canvasSize.height - buttonSize.height - 48) / 2))
-        items = CircularButtonLayout.items(count: count, radius: radius, buttonSize: buttonSize).map {
+        items = ring.map {
             $0.offsetBy(dx: canvasSize.width / 2, dy: canvasSize.height / 2)
         }
         deletionRect = CGRect(x: canvasSize.width / 2 - 30,
-            y: canvasSize.height / 2 + radius + buttonSize.height / 2 + 4, width: 60, height: 20)
+            y: canvasSize.height / 2 + bounds.maxY + 4, width: 60, height: 20)
     }
 }
