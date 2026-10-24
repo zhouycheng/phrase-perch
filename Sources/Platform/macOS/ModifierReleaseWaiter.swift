@@ -4,13 +4,14 @@ import Foundation
 @MainActor
 func waitForModifierRelease(
     timeout: Duration = HoldMenuSession.modifierReleaseTimeout,
+    now: () -> ContinuousClock.Instant = { .now },
+    sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
     released: () -> Bool, current: () -> Bool
 ) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
+    let deadline = now().advanced(by: timeout)
     while !released() {
-        guard !Task.isCancelled, current(), clock.now < deadline else { return false }
-        do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
+        guard !Task.isCancelled, current(), now() < deadline else { return false }
+        do { try await sleep(.milliseconds(10)) } catch { return false }
     }
     return !Task.isCancelled && current()
 }

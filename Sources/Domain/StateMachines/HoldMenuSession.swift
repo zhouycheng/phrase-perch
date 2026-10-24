@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 struct HoldMenuSession {
-    static let modifierReleaseTimeout: Duration = .milliseconds(500)
+    static let modifierReleaseTimeout: Duration = .seconds(1)
     enum Trigger: Equatable { case modifier, shortcut }
     enum Phase: Equatable { case idle, checking, choosing, waitingForModifiers, inserting }
     enum ModifierAction: Equatable { case begin, release, cancel, none }
@@ -12,8 +12,7 @@ struct HoldMenuSession {
 
     func modifierAction(current: UInt, previous: UInt, configured: UInt, shortcutModifiers: UInt?) -> ModifierAction {
         if trigger == .shortcut {
-            guard let allowed = shortcutModifiers, current & ~allowed == 0 else { return .cancel }
-            return (phase == .checking || phase == .choosing) && current != allowed ? .release : .none
+            return .none
         }
         if trigger == .modifier, phase == .checking || phase == .choosing {
             return current == 0 ? .release : (current == configured ? .none : .cancel)
@@ -36,6 +35,10 @@ struct HoldMenuSession {
         return true
     }
     mutating func release(_ source: Trigger, selection: UUID?) -> UUID? {
+        guard source == .modifier else { return nil }
+        return select(source, selection: selection)
+    }
+    mutating func select(_ source: Trigger, selection: UUID?) -> UUID? {
         guard trigger == source, phase == .checking || phase == .choosing else { return nil }
         guard phase == .choosing, selection != nil, let token = id else {
             cancel()

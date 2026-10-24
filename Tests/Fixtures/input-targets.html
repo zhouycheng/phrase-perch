@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>PhrasePerch 输入验收</title>
+<style>body{font:18px system-ui;margin:36px;max-width:880px}label{display:block;margin:24px 0 8px}input,textarea,[contenteditable]{font:18px system-ui;box-sizing:border-box;width:100%;padding:14px;border:1px solid #777;border-radius:8px}textarea,[contenteditable]{height:150px;overflow:auto}output{display:block;margin:14px 0;color:#456}button{padding:12px}</style>
+<h1>PhrasePerch 输入验收</h1><p>本页面仅在本机展示输入；不提交内容。</p>
+<label for="plain">单行输入</label><input id="plain" aria-label="单行输入">
+<label for="area">多行输入</label><textarea id="area" aria-label="多行输入"></textarea>
+<label for="rich">富文本输入</label><div id="rich" role="textbox" aria-label="富文本输入" contenteditable="true"></div>
+<label for="readonly">只读输入</label><input id="readonly" aria-label="只读输入" readonly value="只读内容">
+<label for="password">密码输入（仅测试安全边界）</label><input id="password" type="password" aria-label="密码输入">
+<output id="status">尚未输入</output>
+<script>let count=0;document.addEventListener('input',e=>{count++;document.querySelector('#status').textContent=`输入事件 ${count}；目标 ${e.target.id}`});</script></html>

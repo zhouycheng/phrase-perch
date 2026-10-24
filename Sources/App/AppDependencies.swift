@@ -17,10 +17,11 @@ final class AppDependencies {
     let mainWindow: MainWindowController
 
     init(
-        repository: ConfigurationRepository = ConfigurationRepository(initialConfiguration: ApplicationCatalog.initialConfiguration()),
+        repository: ConfigurationRepository? = nil,
         authorizationEnvironment: AuthorizationEnvironment = AuthorizationEnvironment(),
         defaults: UserDefaults = .standard
     ) {
+        let repository = repository ?? ConfigurationRepository(initialConfiguration: ApplicationCatalog.initialConfiguration())
         self.repository = repository
         editing = ProfileEditingService(repository: repository)
         input = TextInsertionService()
@@ -40,7 +41,8 @@ final class AppDependencies {
         preferencesViewModel = PreferencesViewModel(
             repository: repository, service: PreferencesService(repository: repository),
             authorization: authorization, entry: entry, files: files,
-            monitorAvailable: { [monitor] in monitor.mouseMonitorAvailable })
+            monitorAvailable: { [monitor] in monitor.mouseMonitorAvailable },
+            diagnostics: runtime.diagnostics, shortcutState: { [monitor] in monitor.shortcutStatus })
         mainWindow = MainWindowController(viewModel: mainWindowViewModel, preferences: preferencesViewModel)
         authorization.onInvalidate = { [weak runtime] in runtime?.invalidate() }
         files.onInvalidate = { [weak runtime] in runtime?.invalidate() }

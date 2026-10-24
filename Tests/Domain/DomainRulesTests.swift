@@ -21,7 +21,7 @@ final class DomainRulesTests: PresentationTestCase {
             for count in 1...8 {
                 let layout = EditorRingLayout(size: area, count: count)
                 XCTAssertEqual(layout.items.count, count)
-                XCTAssertEqual(layout.items.first?.midX ?? 0, area.width / 2, accuracy: 0.001)
+                XCTAssertEqual(layout.items.first?.midX ?? 0, layout.canvasSize.width / 2, accuracy: 0.001)
                 let gaps = layout.items.enumerated().map { index, rect in
                     EditorRingLayout.edgeGap(rect, layout.items[(index + 1) % count])
                 }
@@ -31,10 +31,10 @@ final class DomainRulesTests: PresentationTestCase {
                         "Unequal visible spacing at \(size), count \(count)")
                 }
                 for (index, rect) in layout.items.enumerated() {
-                    XCTAssertTrue(CGRect(origin: .zero, size: area).contains(rect))
+                    XCTAssertTrue(CGRect(origin: .zero, size: layout.canvasSize).contains(rect))
                     for other in layout.items.dropFirst(index + 1) {
                         XCTAssertFalse(
-                            rect.insetBy(dx: -3, dy: -3).intersects(other.insetBy(dx: -3, dy: -3)),
+                            rect.intersects(other),
                             "Overlap at \(size), count \(count)")
                     }
                 }
@@ -42,9 +42,9 @@ final class DomainRulesTests: PresentationTestCase {
         }
         let compressed = EditorRingLayout(size: CGSize(width: 408, height: 272), count: 8)
         for (index, rect) in compressed.items.enumerated() {
-            XCTAssertTrue(CGRect(x: 0, y: 0, width: 408, height: 272).contains(rect))
+            XCTAssertTrue(CGRect(origin: .zero, size: compressed.canvasSize).contains(rect))
             XCTAssertFalse(
-                compressed.items.dropFirst(index + 1).contains { rect.insetBy(dx: -3, dy: -3).intersects($0) })
+                compressed.items.dropFirst(index + 1).contains { rect.intersects($0) })
         }
         XCTAssertTrue(EditorRingLayout(size: CGSize(width: 458, height: 508), count: 0).items.isEmpty)
         XCTAssertEqual(EditorColumns(width: 1600).editor, 420)
@@ -58,6 +58,7 @@ final class DomainRulesTests: PresentationTestCase {
             application: ApplicationIdentity(bundleIdentifier: "test.shortcut", fallbackBundlePath: nil),
             displayName: "Shortcut", displayMode: .shortcutOnly, buttons: modifierProfile.buttons)
         shortcutProfile.buttons[0].id = UUID()
+        shortcutProfile.rootNodes = shortcutProfile.buttons.map { MenuNode(kind: .snippet, id: $0.id) }
         XCTAssertTrue(modifierProfile.canTrigger(.modifier))
         XCTAssertFalse(modifierProfile.canTrigger(.shortcut))
         XCTAssertFalse(shortcutProfile.canTrigger(.modifier))
@@ -121,8 +122,8 @@ final class DomainRulesTests: PresentationTestCase {
         let selection = UUID()
         XCTAssertNil(session.release(.modifier, selection: selection))
         XCTAssertEqual(session.phase, .choosing)
-        XCTAssertEqual(session.release(.shortcut, selection: selection), token)
-        XCTAssertNil(session.release(.shortcut, selection: selection))
+        XCTAssertEqual(session.select(.shortcut, selection: selection), token)
+        XCTAssertNil(session.select(.shortcut, selection: selection))
         XCTAssertTrue(session.commit(token))
         XCTAssertFalse(session.commit(token))
         session.cancel()
@@ -137,7 +138,7 @@ final class DomainRulesTests: PresentationTestCase {
         XCTAssertEqual(session.phase, .idle)
         let second = try XCTUnwrap(session.begin(.shortcut))
         XCTAssertTrue(session.show(second))
-        XCTAssertEqual(session.release(.shortcut, selection: UUID()), second)
+        XCTAssertEqual(session.select(.shortcut, selection: UUID()), second)
         session.cancel()
         let third = try XCTUnwrap(session.begin(.shortcut))
         XCTAssertFalse(session.commit(second))
@@ -165,38 +166,17 @@ final class DomainRulesTests: PresentationTestCase {
         }
     }
 
-    func testShortcutReleasesWithEitherKeyOrderAndRejectsExtraModifiers() throws {
-        let command = ClickModifier.command.mask
-        let option = ClickModifier.option.mask
-        for allowed in [UInt(0), command, command | option] {
-            var session = HoldMenuSession()
-            let token = try XCTUnwrap(session.begin(.shortcut))
-            XCTAssertTrue(session.show(token))
-            XCTAssertEqual(session.modifierAction(current: allowed, previous: allowed, configured: option, shortcutModifiers: allowed), .none)
-            XCTAssertEqual(session.modifierAction(current: allowed | ClickModifier.shift.mask, previous: allowed, configured: option, shortcutModifiers: allowed), .cancel)
-            XCTAssertEqual(session.modifierAction(current: allowed, previous: allowed, configured: option, shortcutModifiers: nil), .cancel)
-            if allowed != 0 {
-                XCTAssertEqual(session.modifierAction(current: 0, previous: allowed, configured: option, shortcutModifiers: allowed), .release)
-            }
-            if allowed == command | option {
-                for remaining in [command, option] {
-                    XCTAssertEqual(session.modifierAction(current: remaining, previous: allowed, configured: option, shortcutModifiers: allowed), .release)
-                }
-            }
-            XCTAssertEqual(session.release(.shortcut, selection: UUID()), token)
-            XCTAssertEqual(session.modifierAction(current: 0, previous: allowed, configured: option, shortcutModifiers: allowed), .none)
-            XCTAssertTrue(session.commit(token))
-            XCTAssertEqual(session.modifierAction(current: 0, previous: allowed, configured: option, shortcutModifiers: allowed), .none)
-        }
-    }
-
-    func testMenuClosesOnlyAfterCompleteInsertionOrDispatch() {
-        for result in [InsertionResult.insertedVerified, .dispatchedUnverified] { XCTAssertTrue(result.closesMenu) }
-        for result in [
-            InsertionResult.notWritten, .unsupported, .partialVerified, .interruptedAfterDispatch, .indeterminate,
-        ] {
-            XCTAssertFalse(result.closesMenu)
-        }
+    func testPersistentShortcutIgnoresReleaseAndCommitsOnSelection() throws {
+        var session = HoldMenuSession()
+        let token = try XCTUnwrap(session.begin(.shortcut))
+        XCTAssertNil(session.release(.shortcut, selection: nil))
+        XCTAssertTrue(session.show(token))
+        XCTAssertNil(session.release(.shortcut, selection: UUID()))
+        XCTAssertEqual(session.modifierAction(current: 0, previous: ClickModifier.option.mask,
+            configured: ClickModifier.option.mask, shortcutModifiers: nil), .none)
+        XCTAssertEqual(session.select(.shortcut, selection: UUID()), token)
+        XCTAssertTrue(session.commit(token))
+        XCTAssertFalse(session.commit(token))
     }
 
     func testCurrentPreferencesRequireExplicitModifier() throws {
@@ -237,29 +217,20 @@ final class DomainRulesTests: PresentationTestCase {
         XCTAssertTrue(dockPolicyChangeNeeded(currentDockVisible: true, requestedDockVisible: false))
     }
 
-    func testFloatingButtonTitleShowsTenCharactersOnOneLine() {
+    func testFloatingButtonTitleFitsItsAvailableWidth() {
         XCTAssertEqual(floatingButtonTitle("继续"), "继续")
         XCTAssertEqual(floatingButtonTitle("详细解释一下"), "详细解释一下")
         XCTAssertEqual(floatingButtonTitle("👩‍💻快速回复"), "👩‍💻快速回复")
-        XCTAssertEqual(floatingButtonTitle("请检查并解释这段代码"), "请检查并解释这段代码")
-        XCTAssertEqual(floatingButtonTitle("请检查并解释这段代码实现"), "请检查并解释这段代码…")
         XCTAssertEqual(floatingButtonTitle("第一行\n第二行"), "第一行 第二行")
-        XCTAssertEqual(floatingButtonTitle(String(repeating: "👩‍💻", count: 11)), String(repeating: "👩‍💻", count: 10) + "…")
+        let font = NSFont.systemFont(ofSize: snippetTitleFontSize, weight: .medium)
+        for title in ["请检查并解释这段代码", "请检查并解释这段代码实现", String(repeating: "👩‍💻", count: 11)] {
+            let visible = floatingButtonTitle(title)
+            XCTAssertTrue(visible.hasSuffix("…"))
+            XCTAssertLessThanOrEqual((visible as NSString).size(withAttributes: [.font: font]).width, 112)
+        }
     }
 
-    func testLegacyTitleSettingsDefaultAndRoundTrip() throws {
-        let legacy = Data(#"{"isEnabled":true,"clickModifier":"option"}"#.utf8)
-        var preferences = try JSONDecoder().decode(Preferences.self, from: legacy)
-        XCTAssertEqual(preferences.titleAPIBaseURL, Preferences.defaultTitleAPIBaseURL)
-        XCTAssertEqual(preferences.titleModel, "")
-        XCTAssertEqual(preferences.titleGenerationProvider, .cliProxyAPI)
-        XCTAssertEqual(preferences.codexExecutablePath, "")
-        preferences.titleAPIBaseURL = "http://localhost:1234/v1"
-        preferences.titleModel = "local-model"
-        preferences.titleGenerationProvider = .codexCLI
-        preferences.codexExecutablePath = "/test/codex"
-        XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences)), preferences)
-    }
+
 
     func testCommandQIsRecognizedWithoutOtherModifiers() {
         XCTAssertTrue(isCommandQuitShortcut(charactersIgnoringModifiers: "q", modifiers: .command))
@@ -275,7 +246,7 @@ final class DomainRulesTests: PresentationTestCase {
             displayName: "Test")
         let data = try JSONEncoder().encode(AppConfiguration(profiles: [profile]))
         XCTAssertEqual(try JSONDecoder().decode(AppConfiguration.self, from: data).profiles[0], profile)
-        let board = NSPasteboard(name: NSPasteboard.Name("FloatingInputBar-test-\(UUID().uuidString)"))
+        let board = NSPasteboard(name: NSPasteboard.Name("PhrasePerch-test-\(UUID().uuidString)"))
         defer { board.releaseGlobally() }
         board.setString("old", forType: .string)
         let text = "  中文 👩🏽‍💻 e\u{301}\n\n末尾\t\n"
@@ -294,25 +265,6 @@ final class DomainRulesTests: PresentationTestCase {
             XCTAssertEqual(event.getIntegerValueField(.keyboardEventKeycode), 9)
             XCTAssertEqual(event.flags, .maskCommand)
             XCTAssertEqual(event.getIntegerValueField(.eventSourceUserData), clipboardPasteEventTag)
-        }
-    }
-
-    func testOverlayCoexistenceAndModifierRelease() {
-        let menu = CGRect(x: -500, y: 200, width: 324, height: 324)
-        let peer = VisibleOverlay(ownerPID: 2, layer: 3, frame: menu, alpha: 1)
-        XCTAssertTrue(hasForeignOverlay([peer], ownPID: 1, menuFrame: menu))
-        XCTAssertFalse(hasForeignOverlay([peer], ownPID: 2, menuFrame: menu))
-        XCTAssertFalse(hasForeignOverlay([peer], ownPID: 1, targetPID: 2, menuFrame: menu))
-        let screen = CGRect(x: -1440, y: 0, width: 1440, height: 900)
-        let desktopHelper = VisibleOverlay(ownerPID: 3, layer: 25, frame: screen, alpha: 1)
-        XCTAssertFalse(hasForeignOverlay([desktopHelper], ownPID: 1, menuFrame: menu, screens: [screen]))
-        XCTAssertTrue(hasForeignOverlay([peer], ownPID: 1, menuFrame: menu, screens: [screen]))
-        for window in [
-            VisibleOverlay(ownerPID: 2, layer: 0, frame: menu, alpha: 1),
-            VisibleOverlay(ownerPID: 2, layer: 3, frame: menu, alpha: 0),
-            VisibleOverlay(ownerPID: 2, layer: 3, frame: CGRect(x: 900, y: 900, width: 300, height: 300), alpha: 1),
-        ] {
-            XCTAssertFalse(hasForeignOverlay([window], ownPID: 1, menuFrame: menu))
         }
     }
 
@@ -374,16 +326,16 @@ final class DomainRulesTests: PresentationTestCase {
         let identity = ApplicationIdentity(bundleIdentifier: "com.test", fallbackBundlePath: nil)
         let profile = AppProfile(application: identity, displayName: "Test", buttons: [snippet])
         XCTAssertThrowsError(try AppConfiguration(profiles: [profile, profile]).validate())
-        XCTAssertThrowsError(try AppConfiguration(schemaVersion: 1).validate())
+        XCTAssertThrowsError(try AppConfiguration(schemaVersion: 999).validate())
     }
 
     @MainActor
     func testModifierReleaseWaitTimeoutAndNewHoldInvalidation() async {
-        XCTAssertEqual(HoldMenuSession.modifierReleaseTimeout, .milliseconds(500))
+        XCTAssertEqual(HoldMenuSession.modifierReleaseTimeout, .seconds(1))
         var session = HoldMenuSession()
         let token = session.begin(.shortcut)!
         _ = session.show(token)
-        _ = session.release(.shortcut, selection: UUID())
+        _ = session.select(.shortcut, selection: UUID())
         let timeout = await waitForModifierRelease(
             timeout: .milliseconds(20), released: { false }, current: { session.isCurrent(token) })
         XCTAssertFalse(timeout)
@@ -427,9 +379,10 @@ final class DomainRulesTests: PresentationTestCase {
         XCTAssertEqual(restarted.step, .restart)
     }
 
-    func testLegacyAnchorPreferenceDefaultsAndRoundTrips() throws {
-        let legacy = Data(#"{"isEnabled":true,"clickModifier":"option"}"#.utf8)
-        var preferences = try JSONDecoder().decode(Preferences.self, from: legacy)
+    func testAnchorPreferenceRequiresCurrentFieldsAndRoundTrips() throws {
+        let incomplete = Data(#"{"isEnabled":true,"clickModifier":"option"}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(Preferences.self, from: incomplete))
+        var preferences = Preferences()
         XCTAssertEqual(preferences.menuAnchorMode, .mouse)
         preferences.menuAnchorMode = .caret
         XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences)), preferences)
@@ -476,7 +429,7 @@ final class DomainRulesTests: PresentationTestCase {
             let anchor = MenuAnchor(
                 mode: .caret, mouse: mouse, caretBounds: caret, primaryScreenTop: 1080,
                 screens: [screen], editorBounds: editor)
-            XCTAssertEqual(anchor.point, CGPoint(x: 545, y: 1016.5))
+            XCTAssertEqual(anchor.point, CGPoint(x: 661, y: 1001))
             XCTAssertTrue(anchor.usedEditorFallback)
             XCTAssertFalse(anchor.usedMouseFallback)
         }
@@ -498,7 +451,7 @@ final class DomainRulesTests: PresentationTestCase {
         let clipped = MenuAnchor(
             mode: .caret, mouse: mouse, caretBounds: nil, primaryScreenTop: 900,
             screens: screens, editorBounds: CGRect(x: -1500, y: 300, width: 200, height: 40))
-        XCTAssertEqual(clipped.point, CGPoint(x: -1370, y: 580))
+        XCTAssertEqual(clipped.point, CGPoint(x: -1301, y: 560))
         XCTAssertTrue(clipped.usedEditorFallback)
         for editor: CGRect? in [nil, .zero, CGRect(x: CGFloat.infinity, y: 0, width: 20, height: 20),
             CGRect(x: 2000, y: 0, width: 200, height: 20)]

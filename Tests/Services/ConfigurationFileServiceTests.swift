@@ -17,9 +17,6 @@ final class ConfigurationFileServiceTests: XCTestCase {
             editing: ProfileEditingService(repository: repository), dialog: dialog)
         let original = repository.configuration
         var imported = AppConfiguration()
-        imported.preferences.titleGenerationProvider = .codexCLI
-        imported.preferences.codexExecutablePath = "/test/codex"
-        imported.preferences.titleModel = "saved-proxy-model"
         imported.profiles = [
             AppProfile(
                 application: ApplicationIdentity(bundleIdentifier: "test.import", fallbackBundlePath: nil),

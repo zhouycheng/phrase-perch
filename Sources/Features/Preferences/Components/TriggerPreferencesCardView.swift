@@ -16,6 +16,9 @@ struct TriggerPreferencesCardView: View {
                     .labelsHidden().toggleStyle(.switch)
                     .disabled(!viewModel.isReady)
                 }
+                Toggle("插入时复制到剪贴板", isOn: $viewModel.copyOnInsert)
+                    .disabled(!viewModel.isReady)
+                SettingsExplanationView(text: "关闭后通过辅助功能直接写入；编辑器需支持替换选区。空白区域选中文案时复制到剪贴板。")
                 Divider()
                 SettingsControlRow("修饰键") {
                     Picker(
@@ -43,13 +46,14 @@ struct TriggerPreferencesCardView: View {
                 }
                 SettingsExplanationView(
                     text: viewModel.menuAnchorMode == .mouse
-                        ? "先点入输入框，将鼠标放在其中。按住触发键展开，移到文案按钮，松开后粘贴；未选中则取消。"
-                        : "先点入输入框。按住触发键从输入光标处展开，再移动鼠标选择文案，松开后粘贴。光标位置不可用时，在输入框内展开；输入框位置也不可用时改用鼠标位置。")
+                        ? "输入框中选中文案后插入，空白区域选中后复制。修饰键按住展开、移动选择、松开插入；组合快捷键按一次打开轮盘，点击文案插入。菜单在鼠标附近显示。"
+                        : "菜单优先在输入光标附近展开；光标不可用时在输入框可见区域或鼠标附近显示。")
                 SettingsControlRow("快捷键") {
-                    KeyboardShortcuts.Recorder(for: .toggleFloatingInputBar)
-                        .accessibilityLabel("按住展开的快捷键")
+                    KeyboardShortcuts.Recorder(for: .togglePhrasePerch)
+                        .accessibilityLabel("按一次打开文案轮盘的快捷键")
                 }
-                SettingsExplanationView(text: "每个应用使用修饰键还是快捷键，请在首页选择应用后设置。")
+                SettingsExplanationView(text: viewModel.shortcutStatus)
+                SettingsExplanationView(text: "在首页点亮应用的调出方式。悬停高亮的“下一页”展开更多内容，悬停“上一页”恢复上一张轮盘。")
             }
         }
     }

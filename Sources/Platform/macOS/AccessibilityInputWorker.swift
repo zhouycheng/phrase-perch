@@ -1,171 +1,227 @@
 import AppKit
 import ApplicationServices
 import Carbon
-import OSLog
-import Observation
 
 actor AccessibilityInputWorker: InputTargetWorker {
+    private let access: any AccessibilityAccess
+    init(access: any AccessibilityAccess = SystemAccessibilityAccess()) { self.access = access }
     private var element: AXUIElement?
+    private var originalFocus: AXUIElement?
     private var operationID: UUID?
     private var pid: pid_t = 0
     private var originalSelection: NSRange?
-    private let log = Logger(subsystem: "local.FloatingInputBar", category: "input-target")
+    private var observation: AXFocusObservation?
+    private var onInvalidated: (@Sendable (UUID) -> Void)?
+    private var captureError: AXError?
+    private var lastError: AXError = .success
+    private var cachedCaret: (element: AXUIElement, selection: NSRange, visible: NSRange, bounds: CGRect, caret: CGRect)?
 
+    func setInvalidationHandler(_ handler: @escaping @Sendable (UUID) -> Void) {
+        onInvalidated = handler
+    }
     private func value(_ object: AXUIElement, _ attribute: CFString) -> CFTypeRef? {
-        var result: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(object, attribute, &result) == .success else { return nil }
+        guard !Task.isCancelled else { return nil }
+        let (error, result) = access.attribute(object, attribute)
+        if error != .success {
+            lastError = error
+            if error != .attributeUnsupported && error != .noValue { captureError = error }
+            return nil
+        }
         return result
     }
-    private func settable(_ object: AXUIElement, _ attribute: CFString) -> Bool {
-        var flag = DarwinBoolean(false)
-        return AXUIElementIsAttributeSettable(object, attribute, &flag) == .success && flag.boolValue
+    private func object(_ raw: CFTypeRef?) -> AXUIElement? {
+        guard let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        return unsafeDowncast(raw, to: AXUIElement.self)
     }
     private func focused(_ pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.4)
-        let system = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(system, 0.4)
-        let appFocus = value(app, kAXFocusedUIElementAttribute as CFString)
-        guard let object = appFocus ?? value(system, kAXFocusedUIElementAttribute as CFString),
-            CFGetTypeID(object) == AXUIElementGetTypeID()
-        else { return nil }
-        let target = unsafeDowncast(object, to: AXUIElement.self)
-        if appFocus == nil {
-            var targetPID: pid_t = 0
-            guard AXUIElementGetPid(target, &targetPID) == .success, targetPID == pid else { return nil }
-        }
-        AXUIElementSetMessagingTimeout(target, 0.4)
+        let raw = value(app, kAXFocusedUIElementAttribute as CFString)
+        if raw == nil, lastError == .cannotComplete { return nil }
+        guard let target = object(raw) else { return nil }
+        guard access.owner(target) == pid else { return nil }
         return target
     }
-    private func selectedRange(_ target: AXUIElement) -> NSRange? {
-        guard let raw = value(target, kAXSelectedTextRangeAttribute as CFString),
-            CFGetTypeID(raw) == AXValueGetTypeID()
-        else { return nil }
+    private func selectedRange(_ target: AXUIElement, attribute: CFString = kAXSelectedTextRangeAttribute as CFString) -> NSRange? {
+        guard let raw = value(target, attribute),
+            CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
         let ax = unsafeDowncast(raw, to: AXValue.self)
         var range = CFRange()
         guard AXValueGetType(ax) == .cfRange, AXValueGetValue(ax, .cfRange, &range),
-            range.location >= 0, range.length >= 0
-        else { return nil }
+            range.location >= 0, range.length >= 0, range.length <= Int.max - range.location else { return nil }
         return NSRange(location: range.location, length: range.length)
     }
-    private func validateEditor(_ target: AXUIElement) throws {
-        guard
-            isOrdinaryTextInput(
-                role: value(target, kAXRoleAttribute as CFString) as? String,
-                subrole: value(target, kAXSubroleAttribute as CFString) as? String,
-                enabled: value(target, kAXEnabledAttribute as CFString) as? Bool)
-        else {
-            throw InputFailure("当前输入位置暂不支持；密码框、只读或未知位置不会写入")
+    private func isSecure(_ target: AXUIElement) -> Bool {
+        value(target, kAXSubroleAttribute as CFString) as? String == kAXSecureTextFieldSubrole as String
+            || value(target, kAXRoleAttribute as CFString) as? String == kAXSecureTextFieldSubrole as String
+    }
+    private func ordinary(_ target: AXUIElement) -> Bool {
+        isOrdinaryTextInput(
+            role: value(target, kAXRoleAttribute as CFString) as? String,
+            subrole: value(target, kAXSubroleAttribute as CFString) as? String,
+            enabled: value(target, kAXEnabledAttribute as CFString) as? Bool)
+            && value(target, "AXReadOnly" as CFString) as? Bool != true
+    }
+    private func settable(_ target: AXUIElement, _ attribute: CFString) -> Bool {
+        guard !Task.isCancelled else { return false }
+        return access.settable(target, attribute)
+    }
+    private func permitsPaste(_ target: AXUIElement, pid: pid_t) -> Bool {
+        guard access.owner(target) == pid, ordinary(target) else { return false }
+        if settable(target, kAXValueAttribute as CFString) {
+            return true
         }
-        guard
-            settable(target, kAXSelectedTextAttribute as CFString)
-                || (settable(target, kAXValueAttribute as CFString) && selectedRange(target) != nil)
-        else {
-            throw InputFailure("无法确认当前控件可编辑")
+        if TextInputEligibility.supportsPasteAdapter(access.bundleIdentifier(pid)) {
+            guard let editable = object(value(target, "AXEditableAncestor" as CFString)) else { return false }
+            return CFEqual(editable, target)
         }
+        return settable(target, kAXSelectedTextAttribute as CFString)
+    }
+    private func resolveEditor(_ focus: AXUIElement, pid: pid_t) throws -> AXUIElement? {
+        var node: AXUIElement? = focus
+        var candidate: AXUIElement?
+        // Only inspect the focused lineage; siblings may be unrelated input targets.
+        for _ in 0..<5 {
+            try Task.checkCancellation()
+            guard let current = node else { break }
+            if isSecure(current) { throw InputCaptureFailure.secureInput }
+            if candidate == nil, ordinary(current) { candidate = current }
+            node = object(value(current, kAXParentAttribute as CFString))
+            if !TextInputEligibility.supportsPasteAdapter(access.bundleIdentifier(pid)) {
+                break
+            }
+        }
+        return candidate
     }
     private func caretBounds(_ editor: AXUIElement, selection: NSRange) -> CGRect? {
-        guard selection.length <= Int.max - selection.location else { return nil }
-        var range = CFRange(location: selection.location + selection.length, length: 0)
-        guard let parameter = AXValueCreate(.cfRange, &range) else { return nil }
-        var result: CFTypeRef?
-        guard
-            AXUIElementCopyParameterizedAttributeValue(
-                editor, kAXBoundsForRangeParameterizedAttribute as CFString,
-                parameter, &result) == .success,
-            let result, CFGetTypeID(result) == AXValueGetTypeID()
-        else { return nil }
-        let ax = unsafeDowncast(result, to: AXValue.self)
-        var rect = CGRect.zero
-        guard AXValueGetType(ax) == .cgRect, AXValueGetValue(ax, .cgRect, &rect) else { return nil }
+        guard !Task.isCancelled else { return nil }
+        let (error, rect) = access.caret(editor, selection)
+        if error != .success { lastError = error }
         return rect
     }
+
     private func editorBounds(_ editor: AXUIElement) -> CGRect? {
         guard let position = value(editor, kAXPositionAttribute as CFString),
             let size = value(editor, kAXSizeAttribute as CFString),
-            CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID()
-        else { return nil }
+            CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
         var origin = CGPoint.zero
         var dimensions = CGSize.zero
         guard AXValueGetValue(unsafeDowncast(position, to: AXValue.self), .cgPoint, &origin),
-            AXValueGetValue(unsafeDowncast(size, to: AXValue.self), .cgSize, &dimensions)
-        else { return nil }
+            AXValueGetValue(unsafeDowncast(size, to: AXValue.self), .cgSize, &dimensions) else { return nil }
         return CGRect(origin: origin, size: dimensions)
     }
-    func captureTarget(id: UUID, pid: pid_t, position: CGPoint, mode: MenuAnchorMode) -> CapturedInputTarget? {
-        guard !Task.isCancelled, AXIsProcessTrusted(), !IsSecureEventInputEnabled() else {
-            log.info("Capture rejected: cancelled or input authorization unavailable")
-            return nil
+    func captureTarget(id: UUID, pid: pid_t, position: CGPoint, mode: MenuAnchorMode) async throws -> CapturedInputTarget? {
+        for attempt in 0..<2 {
+            do { return try capture(id: id, pid: pid, mode: mode) }
+            catch InputCaptureFailure.unavailable(let code) where attempt == 0 && code == AXError.cannotComplete.rawValue {
+                try await Task.sleep(for: .milliseconds(20))
+            }
         }
-        guard let editor = focused(pid) else {
-            log.info("Capture rejected: focused element unavailable")
-            return nil
+        return nil
+    }
+    private func capture(id: UUID, pid: pid_t, mode: MenuAnchorMode) throws -> CapturedInputTarget {
+        try Task.checkCancellation()
+        guard access.trusted else { throw InputCaptureFailure.authorization }
+        guard !access.secureInput else { throw InputCaptureFailure.secureInput }
+        lastError = .success
+        captureError = nil
+        guard let focus = focused(pid) else {
+            guard lastError == .noValue else { throw InputCaptureFailure.unavailable(lastError.rawValue) }
+            lastError = .success
+            guard focused(pid) == nil, lastError == .noValue else { throw InputCaptureFailure.changed }
+            self.pid = pid; operationID = id; element = nil; originalFocus = nil; originalSelection = nil; observation = nil
+            var captured = CapturedInputTarget(id: id, caretBounds: nil)
+            captured.canPaste = false
+            captured.focusKind = .nonInput
+            captured.detail = "复制模式"
+            return captured
         }
-        do { try validateEditor(editor) } catch {
-            log.info("Capture rejected: editor is not an ordinary writable input")
-            return nil
+        let editor = try resolveEditor(focus, pid: pid)
+        lastError = .success
+        let selection = editor.flatMap { selectedRange($0) }
+        if selection == nil, lastError == .cannotComplete {
+            throw InputCaptureFailure.unavailable(lastError.rawValue)
         }
-        guard let selection = selectedRange(editor) else {
-            log.info("Capture rejected: text selection unavailable")
-            return nil
+        let visible = editor.flatMap { selectedRange($0, attribute: kAXVisibleCharacterRangeAttribute as CFString) }
+        let bounds = editor.flatMap(editorBounds)
+        var caret = mode == .caret ? editor.flatMap { node in selection.flatMap { caretBounds(node, selection: $0) } } : nil
+        if let rect = caret, !rect.origin.x.isFinite || !rect.origin.y.isFinite || !rect.width.isFinite
+            || !rect.height.isFinite || rect.width < 0 || rect.height <= 0
+            || bounds.map({ !$0.insetBy(dx: -2, dy: -2).contains(CGPoint(x: rect.midX, y: rect.midY)) || rect.height > $0.height + 4 }) == true {
+            caret = nil
         }
-        if mode == .mouse && !mouseHitsEditor(editor, pid: pid, position: position) {
-            log.info("Capture rejected: pointer is outside the focused input")
-            return nil
+        var usedCache = false
+        if caret == nil, mode == .caret, let editor, let selection, let bounds, let cached = cachedCaret,
+            observation?.changed == false, observation?.tracksSelection == true,
+            visible == cached.visible, CFEqual(editor, cached.element), selection == cached.selection, bounds == cached.bounds {
+            caret = cached.caret
+            usedCache = true
         }
-        let caret = mode == .caret ? caretBounds(editor, selection: selection) : nil
-        let bounds = mode == .caret ? editorBounds(editor) : nil
-        guard !Task.isCancelled, let current = focused(pid), CFEqual(editor, current),
-            selectedRange(editor) == selection
-        else {
-            log.info("Capture rejected: cancelled or focus or selection changed")
-            return nil
-        }
-        // Retain the input before showing a panel; never recapture at release.
-        element = editor
+        guard let current = focused(pid), CFEqual(focus, current) else { throw InputCaptureFailure.changed }
+        if let editor, selectedRange(editor) != selection { throw InputCaptureFailure.changed }
+        try Task.checkCancellation()
+        let canPaste = editor.map { permitsPaste($0, pid: pid) } == true && selection != nil
+        try Task.checkCancellation()
+        self.element = editor
+        originalFocus = focus
         self.pid = pid
         operationID = id
         originalSelection = selection
-        return CapturedInputTarget(
-            id: id, caretBounds: caret, editorBounds: bounds)
-    }
-    private func mouseHitsEditor(_ editor: AXUIElement, pid: pid_t, position: CGPoint) -> Bool {
-        let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.4)
-        var hit: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(app, Float(position.x), Float(position.y), &hit) == .success else {
-            return false
-        }
-        for _ in 0..<8 {
-            guard let node = hit else { break }
-            AXUIElementSetMessagingTimeout(node, 0.4)
-            if CFEqual(node, editor) {
-                return true
+        observation = nil
+        if let editor {
+            let callback = onInvalidated
+            if access.observesChanges {
+                observation = AXFocusObservation(pid: pid, app: AXUIElementCreateApplication(pid), editor: editor,
+                    window: object(value(editor, kAXWindowAttribute as CFString))) {
+                    callback?(id)
+                }
             }
-            guard let parent = value(node, kAXParentAttribute as CFString),
-                CFGetTypeID(parent) == AXUIElementGetTypeID()
-            else { break }
-            hit = unsafeDowncast(parent, to: AXUIElement.self)
-        }
-        return false
+            if let caret, let selection, let visible, let bounds {
+                cachedCaret = (editor, selection, visible, bounds, caret)
+            } else { cachedCaret = nil }
+        } else { cachedCaret = nil }
+        try Task.checkCancellation()
+        var captured = CapturedInputTarget(id: id, caretBounds: caret, editorBounds: bounds)
+        captured.canPaste = canPaste
+        captured.canDirectWrite = editor.map { ordinary($0) && settable($0, kAXSelectedTextAttribute as CFString) } == true && selection != nil
+        let role = value(focus, kAXRoleAttribute as CFString) as? String
+        captured.focusKind = editor != nil && selection != nil ? .editable : (["AXButton", "AXWindow", "AXStaticText", "AXScrollArea", "AXWebArea"].contains(role ?? "") ? .nonInput : .unknown)
+        captured.usedCachedCaret = usedCache
+        captured.detail = canPaste || captured.canDirectWrite ? "" : "复制模式"
+        if let error = captureError { throw InputCaptureFailure.unavailable(error.rawValue) }
+        return captured
     }
     func prepareCaptured(pid: pid_t, operationID: UUID) throws -> PreparedInput {
-        guard self.pid == pid, readyToPaste(operationID), let element else {
+        guard self.pid == pid, (readyToPaste(operationID) || readyToWrite(operationID)), let element else {
             throw InputFailure("原输入框、选区或权限已变化，已取消粘贴")
         }
-        return PreparedInput(
-            before: value(element, kAXValueAttribute as CFString) as? String,
-            selection: originalSelection)
+        return PreparedInput(before: value(element, kAXValueAttribute as CFString) as? String, selection: originalSelection)
+    }
+    func focusUnchanged(_ id: UUID) -> Bool {
+        guard operationID == id, access.trusted, !access.secureInput else { return false }
+        if originalFocus != nil { return isFocused(id) }
+        lastError = .success
+        return focused(pid) == nil && lastError == .noValue
     }
     func isFocused(_ id: UUID) -> Bool {
-        guard id == operationID, let element, AXIsProcessTrusted(), !IsSecureEventInputEnabled(),
-            let current = focused(pid)
-        else { return false }
-        return CFEqual(element, current)
+        guard id == operationID, let originalFocus, access.trusted, !access.secureInput,
+            let current = focused(pid) else { return false }
+        return CFEqual(originalFocus, current)
     }
     func readyToPaste(_ id: UUID) -> Bool {
-        guard let element, isFocused(id) else { return false }
-        return (try? validateEditor(element)) != nil && selectedRange(element) == originalSelection
+        guard let element, originalSelection != nil, isFocused(id) else { return false }
+        return permitsPaste(element, pid: pid) && selectedRange(element) == originalSelection
+    }
+    func readyToWrite(_ id: UUID) -> Bool {
+        guard let element, originalSelection != nil, isFocused(id), ordinary(element),
+            access.owner(element) == pid, selectedRange(element) == originalSelection else { return false }
+        return settable(element, kAXSelectedTextAttribute as CFString)
+    }
+    func replaceSelection(_ id: UUID, text: String) throws {
+        try Task.checkCancellation()
+        guard readyToWrite(id), let element else { throw InputFailure("当前输入框不支持直接写入，可在设置中开启粘贴插入") }
+        try Task.checkCancellation()
+        let error = access.replaceSelection(element, text: text)
+        guard error == .success else { throw InputCaptureFailure.unavailable(error.rawValue) }
     }
     func readback(_ id: UUID) -> String? {
         guard id == operationID, let element, isFocused(id) else { return nil }
@@ -174,6 +230,7 @@ actor AccessibilityInputWorker: InputTargetWorker {
     func release(_ id: UUID) {
         if operationID == id {
             element = nil
+            originalFocus = nil
             operationID = nil
             originalSelection = nil
             pid = 0

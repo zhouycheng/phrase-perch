@@ -9,38 +9,13 @@ final class PreferencesViewModel {
     private let entry: AppEntryService
     private let files: ConfigurationFileService
     private let monitorAvailable: () -> Bool
-    private let titleService: TitleGenerationService
-    private var modelsTask: Task<Void, Never>?
-    private var modelsGeneration = 0
-    var titleGenerationProvider = TitleGenerationProvider.cliProxyAPI {
-        didSet {
-            if titleGenerationProvider != oldValue { cancelModelsRead(); titleSettingsMessage = nil }
-        }
-    }
-    var codexExecutablePath = "" {
-        didSet {
-            if codexExecutablePath != oldValue { cancelModelsRead(); titleSettingsMessage = nil }
-        }
-    }
-    var titleAPIBaseURL = Preferences.defaultTitleAPIBaseURL {
-        didSet {
-            if titleAPIBaseURL != oldValue {
-                cancelModelsRead()
-                titleModels = []
-                titleSettingsMessage = nil
-            }
-        }
-    }
-    var titleModel = ""
-    private(set) var titleModels: [String] = []
-    private(set) var isReadingModels = false
-    private(set) var isCheckingCodex = false
-    private(set) var isSavingTitleSettings = false
-    private(set) var titleSettingsMessage: String?
+    let diagnostics: InteractionDiagnostics
+    private let shortcutState: () -> String
+    var shortcutStatus: String { shortcutState() }
     init(
         repository: ConfigurationRepository, service: PreferencesService, authorization: AuthorizationService,
         entry: AppEntryService, files: ConfigurationFileService, monitorAvailable: @escaping () -> Bool,
-        titleService: TitleGenerationService = TitleGenerationService()
+        diagnostics: InteractionDiagnostics = InteractionDiagnostics(), shortcutState: @escaping () -> String = { "未设置快捷键" }
     ) {
         self.repository = repository
         self.service = service
@@ -48,7 +23,8 @@ final class PreferencesViewModel {
         self.entry = entry
         self.files = files
         self.monitorAvailable = monitorAvailable
-        self.titleService = titleService
+        self.diagnostics = diagnostics
+        self.shortcutState = shortcutState
     }
     var isReady: Bool { repository.isReady }
     var issue: ConfigurationIssue? { repository.issue }
@@ -56,6 +32,10 @@ final class PreferencesViewModel {
     var enabled: Bool {
         get { repository.configuration.preferences.isEnabled }
         set { service.update { $0.isEnabled = newValue } }
+    }
+    var copyOnInsert: Bool {
+        get { repository.configuration.preferences.copyOnInsert }
+        set { service.update { $0.copyOnInsert = newValue } }
     }
     var clickModifier: ClickModifier {
         get { repository.configuration.preferences.clickModifier }
@@ -86,91 +66,4 @@ final class PreferencesViewModel {
     func exportConfiguration() { files.exportConfiguration() }
     func retryLoad() { Task { await repository.retryLoad() } }
     func retrySave() { Task { _ = await repository.flush() } }
-    func loadTitleSettings() {
-        guard isReady else { return }
-        titleAPIBaseURL = repository.configuration.preferences.titleAPIBaseURL
-        titleModel = repository.configuration.preferences.titleModel
-        titleGenerationProvider = repository.configuration.preferences.titleGenerationProvider
-        codexExecutablePath = repository.configuration.preferences.codexExecutablePath
-        titleSettingsMessage = nil
-    }
-    func readTitleModels() {
-        guard !isReadingModels else { return }
-        cancelModelsRead()
-        let token = modelsGeneration
-        let address = titleAPIBaseURL
-        titleSettingsMessage = nil
-        isReadingModels = true
-        modelsTask = Task { [weak self, titleService] in
-            do {
-                let models = try await titleService.models(at: address)
-                guard let self, !Task.isCancelled, token == self.modelsGeneration else { return }
-                self.titleModels = models
-                self.isReadingModels = false
-                self.modelsTask = nil
-            } catch {
-                guard let self, !Task.isCancelled, token == self.modelsGeneration else { return }
-                self.isReadingModels = false
-                self.modelsTask = nil
-                if !(error is CancellationError) { self.titleSettingsMessage = error.localizedDescription }
-            }
-        }
-    }
-    func checkCodexEnvironment() {
-        guard !isCheckingCodex else { return }
-        cancelModelsRead()
-        let token = modelsGeneration
-        let path = codexExecutablePath
-        titleSettingsMessage = nil
-        isCheckingCodex = true
-        modelsTask = Task { [weak self, titleService] in
-            do {
-                let message = try await titleService.checkCodex(at: path)
-                guard let self, !Task.isCancelled, token == self.modelsGeneration else { return }
-                self.isCheckingCodex = false
-                self.modelsTask = nil
-                self.titleSettingsMessage = message
-            } catch {
-                guard let self, !Task.isCancelled, token == self.modelsGeneration else { return }
-                self.isCheckingCodex = false
-                self.modelsTask = nil
-                if !(error is CancellationError) { self.titleSettingsMessage = error.localizedDescription }
-            }
-        }
-    }
-    func cancelModelsRead() {
-        modelsGeneration += 1
-        modelsTask?.cancel()
-        modelsTask = nil
-        isReadingModels = false
-        isCheckingCodex = false
-    }
-    func saveTitleSettings() async {
-        guard isReady, !isSavingTitleSettings else { return }
-        do {
-            let provider = titleGenerationProvider
-            var address = titleAPIBaseURL
-            var model = titleModel
-            let path = codexExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines)
-            switch provider {
-            case .cliProxyAPI:
-                address = try TitleGenerationService.baseURL(address).absoluteString
-                model = model.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !model.isEmpty else { throw InputFailure("请先读取模型并选择标题生成模型。") }
-            case .codexCLI:
-                _ = try titleService.codexExecutable(at: path)
-            }
-            isSavingTitleSettings = true
-            defer { isSavingTitleSettings = false }
-            service.update {
-                $0.titleGenerationProvider = provider
-                switch provider {
-                case .cliProxyAPI: $0.titleAPIBaseURL = address; $0.titleModel = model
-                case .codexCLI: $0.codexExecutablePath = path
-                }
-            }
-            let saved = await repository.flush()
-            titleSettingsMessage = saved ? "设置已保存" : "设置已应用，配置尚未保存：\(repository.errorMessage ?? repository.saveStatus)"
-        } catch { titleSettingsMessage = error.localizedDescription }
-    }
 }

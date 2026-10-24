@@ -6,6 +6,66 @@ import XCTest
 
 final class TextInsertionServiceTests: PresentationTestCase {
     @MainActor
+    func testDelayedReadbackAndPartialInsertionNeverResend() async {
+        let text = "中文 👩🏽‍💻\n第二行"
+        for complete in [true, false] {
+            let worker = StubInputWorker()
+            let system = StubPasteSystem()
+            let service = TextInsertionService(worker: worker, environment: system.environment)
+            let token = UUID()
+            let target = NSRunningApplication.current
+            await worker.setReadback(
+                before: "前原文后", selection: NSRange(location: 1, length: 2),
+                readings: complete ? ["前原文后", "前中后", "前\(text)后"] : ["前中后"])
+            _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+            let result = await service.insert(Snippet(title: "测试", text: text), target: target, sessionID: token)
+            XCTAssertEqual(result, complete ? .insertedVerified : .partialVerified)
+            XCTAssertEqual(system.dispatches, 1)
+            XCTAssertEqual(system.copies, [text])
+            let reads = await worker.readbackCount
+            if complete { XCTAssertEqual(reads, 3) }
+            else { XCTAssertTrue((8...10).contains(reads)) }
+        }
+    }
+
+    @MainActor
+    func testReadbackBudgetDiscardsLateSuccess() async {
+        let worker = StubInputWorker()
+        let system = StubPasteSystem()
+        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let token = UUID()
+        let target = NSRunningApplication.current
+        await worker.setReadback(before: "", selection: NSRange(location: 0, length: 0),
+            readings: ["测试"], delay: .seconds(2))
+        _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+        let started = ContinuousClock.now
+        let result = await service.insert(Snippet(title: "测试", text: "测试"), target: target, sessionID: token)
+        XCTAssertEqual(result, .dispatchedUnverified)
+        XCTAssertLessThan(started.duration(to: .now), .milliseconds(1400))
+        XCTAssertFalse(service.isBusy)
+        await Task.yield()
+        XCTAssertEqual(service.lastResult, .dispatchedUnverified)
+        XCTAssertEqual(system.dispatches, 1)
+    }
+
+    @MainActor
+    func testCancellationAfterDispatchReportsUncertainResultOnce() async {
+        let worker = StubInputWorker()
+        let system = StubPasteSystem()
+        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let token = UUID()
+        let target = NSRunningApplication.current
+        await worker.setReadback(before: "", selection: NSRange(location: 0, length: 0), readings: [""])
+        _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
+        let task = Task { await service.insert(Snippet(title: "测试", text: "测试"), target: target, sessionID: token) }
+        while system.dispatches == 0 { await Task.yield() }
+        service.cancel()
+        let result = await task.value
+        XCTAssertEqual(result, .interruptedAfterDispatch)
+        XCTAssertEqual(system.dispatches, 1)
+    }
+
+    @MainActor
     func testCapturedTargetCannotBeReplacedAtReleaseOrUsedTwice() async {
         let worker = StubInputWorker()
         let system = StubPasteSystem()
@@ -114,7 +174,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
 
     @MainActor
     func testTwentyNativeMenuHoldSelectionsDispatchExactlyOnce() async throws {
-        let controller = FloatingMenuWindowController(overlayInspector: StubOverlayInspector())
+        let controller = FloatingMenuWindowController()
         controller.onDismiss = {}
         let profile = AppProfile(
             application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),

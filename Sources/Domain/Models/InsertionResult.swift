@@ -2,12 +2,12 @@ import CoreGraphics
 import Foundation
 
 enum InsertionResult: String, Sendable {
-    case insertedVerified, dispatchedUnverified, notWritten, unsupported
+    case insertedVerified, dispatchedUnverified, copied, notWritten, unsupported
     case interruptedAfterDispatch, partialVerified, indeterminate
-    var closesMenu: Bool { self == .insertedVerified || self == .dispatchedUnverified }
     var message: String {
         switch self {
         case .insertedVerified: "已插入"
+        case .copied: "已复制"
         case .dispatchedUnverified: "粘贴操作已发送，请检查目标应用。"
         case .notWritten: "未写入，请先将光标放到可输入位置"
         case .unsupported: "当前输入位置暂不支持"
