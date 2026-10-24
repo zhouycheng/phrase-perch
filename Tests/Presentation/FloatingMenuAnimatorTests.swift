@@ -46,7 +46,7 @@ final class FloatingMenuAnimatorTests: XCTestCase {
             model.configure(
                 profile: profile, at: CGPoint(x: 300, y: 300),
                 visible: CGRect(x: 0, y: 0, width: 1000, height: 800)))
-        XCTAssertEqual(model.snippets.map(\.id), [first.id])
+        XCTAssertEqual(model.page?.remaining.compactMap(\.textID), [first.id])
         let old = model.beginShow(initialMouse: CGPoint(x: 300, y: 300), requiresMovement: true)
         XCTAssertNil(model.select(at: CGPoint(x: 300, y: 300), hitID: first.id))
         XCTAssertEqual(model.select(at: CGPoint(x: 350, y: 350), hitID: first.id), first.id)

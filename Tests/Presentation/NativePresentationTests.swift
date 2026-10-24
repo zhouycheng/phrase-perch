@@ -6,52 +6,101 @@ import XCTest
 
 final class NativePresentationTests: PresentationTestCase {
     @MainActor
-    func testAITitleEditorAndSettingsPreviewsAtAllWindowSizes() async throws {
+    func testSnippetRowWhitespaceSelectsAndDeleteRemainsIndependent() async throws {
+        try requireVisibleUITests()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = ConfigurationRepository(directory: directory)
         for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        let snippets = [Snippet(title: "首条", text: "正文"), Snippet(title: "次条", text: "正文")]
+        let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.hit", fallbackBundlePath: nil),
+            displayName: "Test", buttons: snippets)
+        store.update { $0.profiles = [profile] }
+        let model = ProfileEditorViewModel(profileID: profile.id, repository: store, editing: ProfileEditingService(repository: store))
+        defer { model.stop() }
+        let root = NSHostingView(rootView: GroupContentsView(viewModel: model).background(EditorStyle.background).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = root
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.close() }
+        root.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        func click(_ x: CGFloat, _ yFromTop: CGFloat) throws {
+            let local = CGPoint(x: x, y: root.isFlipped ? yFromTop : root.bounds.height - yFromTop)
+            let location = root.convert(local, to: nil)
+            let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [],
+                timestamp: down.timestamp + 0.01, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+            NSApp.postEvent(up, atStart: true)
+            window.sendEvent(down)
+            window.sendEvent(up)
+        }
+        model.select(snippets[1].id)
+        try savePreview(root, name: "snippet-row-hit-targets.png")
+        try click(300, 22)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(model.session.selectedID, snippets[0].id)
+        model.select(snippets[1].id)
+        try click(300, 3)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(model.session.selectedID, snippets[0].id)
+        model.select(snippets[1].id)
+        try click(562, 22)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(model.deletionID, snippets[0].id)
+        XCTAssertEqual(model.session.selectedID, snippets[1].id)
+        model.cancelDeletion()
+        let saved = await store.flush()
+        XCTAssertTrue(saved)
+    }
+
+    @MainActor
+    func testQuickContentHeaderAtAllWindowSizes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ConfigurationRepository(directory: directory)
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(10)) }
+        let snippet = Snippet(title: "快捷回复", text: "用于界面预览的文案。")
+        let child = SnippetGroup(title: "日常回复", children: [MenuNode(kind: .snippet, id: snippet.id)])
+        let parent = SnippetGroup(title: "工作", children: [MenuNode(kind: .group, id: child.id)])
         store.update {
-            $0.preferences.titleModel = "local-model"
-            $0.profiles = [AppProfile(
-                application: ApplicationIdentity(bundleIdentifier: "preview.ai", fallbackBundlePath: nil), displayName: "Preview",
-                buttons: ["继续", "详细解释一下", "请详细解释一下", "请检查代码并给修改建议", String(repeating: "标题", count: 10),
-                    "Explain this code", "👩‍💻快速回复"].map { Snippet(title: $0, text: "解释这段代码并给出修改建议。") })]
+            $0.profiles = [AppProfile(application: ApplicationIdentity(bundleIdentifier: "preview.header", fallbackBundlePath: nil),
+                displayName: "ChatGPT", displayMode: .both, buttons: [snippet], groups: [parent, child],
+                rootNodes: [MenuNode(kind: .group, id: parent.id)])]
         }
         let coordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: store))
         defer { coordinator.stop() }
-        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620), CGSize(width: 1280, height: 800)] {
-            for page in [MainPage.home, .settings] {
-                let root = NSHostingView(rootView: makeMainWindowView(coordinator, page: page))
+        let editor = try XCTUnwrap(coordinator.mainWindowViewModel.selectedEditor)
+        for nested in [false, true] {
+            editor.openGroup(nil)
+            if nested { editor.openGroup(parent.id); editor.openGroup(child.id) }
+            for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620), CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+                let root = NSHostingView(rootView: makeMainWindowView(coordinator))
                 let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
                 window.appearance = NSAppearance(named: .darkAqua)
                 window.contentView = root
                 root.layoutSubtreeIfNeeded()
                 try await Task.sleep(for: .milliseconds(80))
-                try savePreview(root, name: "ai-\(page)-\(Int(size.width)).png")
-                XCTAssertEqual(root.bounds.width, size.width, accuracy: 1)
+                try savePreview(root, name: "quick-content-\(nested ? "nested" : "root")-\(Int(size.width)).png")
+                XCTAssertEqual(root.bounds.size.width, size.width, accuracy: 1)
+                XCTAssertEqual(root.bounds.size.height, size.height, accuracy: 1)
                 window.close()
-            }
-            for provider in TitleGenerationProvider.allCases {
-                store.update { $0.preferences.titleGenerationProvider = provider }
-                coordinator.preferencesViewModel.loadTitleSettings()
-                let card = NSHostingView(rootView:
-                    TitleGenerationPreferencesCardView(viewModel: coordinator.preferencesViewModel)
-                        .padding(26).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .background(Color(nsColor: .windowBackgroundColor)))
-                card.frame = CGRect(x: 0, y: 0, width: size.width - 68, height: 390)
-                card.appearance = NSAppearance(named: .darkAqua)
-                try await Task.sleep(for: .milliseconds(80))
-                try savePreview(card, name: "ai-card-\(provider.rawValue)-\(Int(size.width)).png")
             }
         }
     }
 
+
+
     @MainActor
     func testSettingsWindowIsReusedAfterRepeatedOpenAndClose() throws {
         try requireVisibleUITests()
-        let coordinator = ApplicationCoordinator()
+        let coordinator = ApplicationCoordinator(dependencies: AppDependencies(
+            repository: ConfigurationRepository(storage: StubConfigurationStorage())))
         coordinator.openMainWindow()
         let first = try XCTUnwrap(NSApp.windows.first { $0.title == "PhrasePerch" })
         defer {
@@ -60,7 +109,7 @@ final class NativePresentationTests: PresentationTestCase {
         }
         XCTAssertTrue(first.titleVisibility == .visible)
         XCTAssertFalse(first.styleMask.contains(.fullSizeContentView))
-        XCTAssertEqual(first.contentView?.bounds.size, CGSize(width: 960, height: 620))
+        XCTAssertEqual(first.contentView?.bounds.size, CGSize(width: 1070, height: 620))
         XCTAssertEqual(first.contentMinSize, CGSize(width: 880, height: 560))
         coordinator.openMainWindow()
         XCTAssertEqual(NSApp.windows.filter { $0.title == first.title }.count, 1)
@@ -352,7 +401,7 @@ final class NativePresentationTests: PresentationTestCase {
         for page in [MainPage.settings, .about] {
             for size in [
                 CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-                CGSize(width: 1280, height: 800),
+                CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
             ] {
                 let root = NSHostingView(rootView: makeMainWindowView(coordinator, page: page))
                 let window = NSWindow(
@@ -429,7 +478,7 @@ final class NativePresentationTests: PresentationTestCase {
 
     @MainActor
     func testNativeAnimationCancellation() async throws {
-        let controller = FloatingMenuWindowController(overlayInspector: StubOverlayInspector())
+        let controller = FloatingMenuWindowController()
         // Isolate animation timing from keyboard activity on the user's live desktop.
         controller.onDismiss = {}
         let profile = AppProfile(
@@ -453,7 +502,7 @@ final class NativePresentationTests: PresentationTestCase {
 
     @MainActor
     func testNativeRadialPreviewSelectionAndDisabledSnippets() throws {
-        let controller = FloatingMenuWindowController(overlayInspector: StubOverlayInspector())
+        let controller = FloatingMenuWindowController()
         let snippets = [
             Snippet(title: "继续", text: "正文"), Snippet(title: "检查", text: "正文"),
             Snippet(title: "解释", text: "正文"), Snippet(title: "隐藏", text: "正文", isEnabled: false),
@@ -492,7 +541,7 @@ final class NativePresentationTests: PresentationTestCase {
 
     @MainActor
     func testSelectionTracksPresentedButtonDuringEntrance() async throws {
-        let controller = FloatingMenuWindowController(overlayInspector: StubOverlayInspector())
+        let controller = FloatingMenuWindowController()
         controller.onDismiss = {}
         let profile = AppProfile(
             application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),

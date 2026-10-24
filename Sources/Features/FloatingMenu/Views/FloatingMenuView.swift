@@ -4,26 +4,41 @@ import QuartzCore
 @MainActor
 final class FloatingMenuView: NSView {
     private(set) var buttons: [NSButton] = []
-    func configure(snippets: [Snippet], layout: RadialLayout) {
+    var onSelect: ((RadialNode.Action) -> Void)?
+    private var nodes: [RadialNode] = []
+    var allowsClick = false
+    func configure(slots: [RadialNode?], layout: RadialLayout) {
+        nodes = []
         for view in subviews { view.removeFromSuperview() }
         frame = CGRect(origin: .zero, size: layout.frame.size)
         wantsLayer = true
         appearance = NSAppearance(named: .darkAqua)
         buttons = []
-        for index in snippets.indices {
-            let rect = layout.itemRect(index: index)
-            let button = FloatingMenuButton(frame: rect)
+        for (slot, entry) in slots.enumerated() {
+            guard let node = entry else { continue }
+            let button = FloatingMenuButton(frame: layout.itemRect(index: slot))
+            button.allowsClick = allowsClick || node.isNavigation
+            button.emphasized = node.action == .previous || node.action == .next
+            button.target = self
+            button.action = button.allowsClick ? #selector(selectNode(_:)) : nil
+            button.tag = nodes.count
             button.wantsLayer = true
             button.isBordered = false
             button.focusRingType = .none
-            button.title = floatingButtonTitle(snippets[index].title)
-            button.setAccessibilityLabel(snippets[index].title)
-            button.toolTip = String(snippets[index].text.prefix(180))
+            button.title = floatingButtonTitle(node.title)
+            button.setAccessibilityLabel(node.title)
+            button.toolTip = String(node.detail.prefix(180))
+            nodes.append(node)
             buttons.append(button)
             addSubview(button)
         }
-        // The empty center is the cancellation area; it neither receives focus nor blocks the editor.
     }
+    var animatedButtons: [NSButton] { buttons }
+    @objc private func selectNode(_ sender: NSButton) {
+        guard nodes.indices.contains(sender.tag) else { return }
+        onSelect?(nodes[sender.tag].action)
+    }
+    func node(at index: Int) -> RadialNode? { nodes.indices.contains(index) ? nodes[index] : nil }
     func interactiveIndex(_ local: CGPoint) -> Int? {
         buttons.firstIndex { button in
             guard let layer = button.layer else { return false }

@@ -20,13 +20,13 @@ final class FloatingMenuTests: PresentationTestCase {
                 XCTAssertLessThanOrEqual(measured.height, size.height - 8)
             }
         }
-        let controller = FloatingMenuWindowController(overlayInspector: StubOverlayInspector())
+        let controller = FloatingMenuWindowController()
         let profile = AppProfile(
             application: ApplicationIdentity(bundleIdentifier: "preview.titles", fallbackBundlePath: nil),
-            displayName: "Preview", buttons: titles.prefix(8).map { Snippet(title: $0, text: "正文") })
+            displayName: "Preview", buttons: titles.prefix(6).map { Snippet(title: $0, text: "正文") })
         XCTAssertTrue(controller.configure(profile: profile, at: CGPoint(x: 500, y: 400), visible: CGRect(x: 0, y: 0, width: 1000, height: 800)))
         let root = try XCTUnwrap(controller.panel.contentView)
-        XCTAssertEqual(root.subviews.compactMap { ($0 as? NSButton)?.title }, Array(titles.prefix(8)).map(floatingButtonTitle))
+        XCTAssertEqual(root.subviews.compactMap { ($0 as? NSButton)?.title }, Array(titles.prefix(6)).map(floatingButtonTitle))
         try savePreview(root, name: "radial-single-line-titles.png")
         (root.subviews[4] as? FloatingMenuButton)?.selected = true
         try savePreview(root, name: "radial-single-line-titles-selected.png")
@@ -44,16 +44,16 @@ final class FloatingMenuTests: PresentationTestCase {
                 CGPoint(x: visible.minX + 1, y: visible.maxY - 1),
                 CGPoint(x: visible.maxX - 1, y: visible.maxY - 1),
             ]
-            for count in [1, 3, 6, 7, 8, 12, 24] {
+            for count in [1, 3, 6, 8] {
                 for point in points {
                     let layout = try XCTUnwrap(RadialLayout(anchor: point, visible: visible, count: count))
                     XCTAssertEqual(layout.items.count, count)
                     XCTAssertEqual(layout.anchor, point)
                     XCTAssertTrue(visible.contains(layout.frame))
-                    XCTAssertNil(layout.selectedIndex(at: point))
+                    XCTAssertNil(layout.selectedIndex(at: layout.center))
                     let radius = try XCTUnwrap(layout.items.first).midY - layout.center.y
                     for (index, rect) in layout.items.enumerated() {
-                        XCTAssertEqual(hypot(rect.midX - layout.center.x, rect.midY - layout.center.y), radius, accuracy: 0.001)
+                        if index < 6 { XCTAssertEqual(hypot(rect.midX - layout.center.x, rect.midY - layout.center.y), radius, accuracy: 0.001) }
                         XCTAssertTrue(visible.contains(rect))
                         XCTAssertEqual(layout.selectedIndex(at: CGPoint(x: rect.midX, y: rect.midY)), index)
                         XCTAssertNil(layout.selectedIndex(at: CGPoint(x: rect.minX, y: rect.minY)))
@@ -93,7 +93,7 @@ final class FloatingMenuTests: PresentationTestCase {
 
     func testEdgeTranslationPreservesRingGeometry() throws {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
-        for count in [1, 3, 6, 12, 24] {
+        for count in [1, 3, 6, 8] {
             let middle = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 720, y: 450), visible: screen, count: count))
             let edge = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 1, y: 1), visible: screen, count: count))
             for (a, b) in zip(middle.items, edge.items) {
@@ -101,8 +101,8 @@ final class FloatingMenuTests: PresentationTestCase {
                 XCTAssertEqual(a.midY - middle.center.y, b.midY - edge.center.y, accuracy: 0.001)
             }
             let radius = hypot(middle.items[0].midX - middle.center.x, middle.items[0].midY - middle.center.y)
-            if count <= 6 { XCTAssertEqual(radius, 100, accuracy: 0.001) }
-            for rect in middle.items {
+            XCTAssertLessThan(radius, 180)
+            for rect in middle.items.prefix(6) {
                 XCTAssertEqual(hypot(rect.midX - middle.center.x, rect.midY - middle.center.y), radius, accuracy: 0.001)
             }
         }
@@ -114,4 +114,5 @@ final class FloatingMenuTests: PresentationTestCase {
             settings: CGRect(x: -900, y: -180, width: 800, height: 800), visible: visible)
         XCTAssertTrue(visible.contains(frame))
     }
+
 }

@@ -8,6 +8,10 @@ struct MenuAnchor: Equatable {
     let point: CGPoint
     let usedMouseFallback: Bool
     let usedEditorFallback: Bool
+    var source: String { usedMouseFallback ? "鼠标回退" : usedEditorFallback ? "输入框边界" : "首选位置" }
+    var detail: String {
+        usedMouseFallback ? "光标位置不可用，已在鼠标附近展开。" : usedEditorFallback ? "光标位置不可用，已在输入框可见区域展开。" : ""
+    }
     init(
         mode: MenuAnchorMode, mouse: CGPoint, caretBounds: CGRect?, primaryScreenTop: CGFloat,
         screens: [CGRect], editorBounds: CGRect? = nil
@@ -39,7 +43,8 @@ struct MenuAnchor: Equatable {
             let visible = screens.map { $0.intersection(converted) }.filter { !$0.isNull && !$0.isEmpty }
                 .max { $0.width * $0.height < $1.width * $1.height }
             if let visible {
-                point = CGPoint(x: visible.midX, y: visible.midY)
+                point = CGPoint(x: max(visible.minX, min(mouse.x, visible.maxX - 1)),
+                    y: max(visible.minY, min(mouse.y, visible.maxY - 1)))
                 usedMouseFallback = false
                 usedEditorFallback = true
                 return
