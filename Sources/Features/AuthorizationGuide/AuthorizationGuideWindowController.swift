@@ -8,7 +8,6 @@ final class AuthorizationGuideWindowController: NSObject, AuthorizationGuidePres
     let viewModel = AuthorizationGuideViewModel()
     var onDragEnded: ((Bool) -> Void)?
     private var followTimer: Timer?
-    private var previousSettingsFrame: CGRect?
     var isVisible: Bool { panel.isVisible }
 
     override init() {
@@ -40,31 +39,25 @@ final class AuthorizationGuideWindowController: NSObject, AuthorizationGuidePres
         let settings = settingsWindowFrame()
         let point = settings.map { CGPoint(x: $0.midX, y: $0.midY) } ?? NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main else { return }
-        configure(
-            applicationURL: applicationURL,
-            frame: authorizationGuideFrame(settings: settings, visible: screen.visibleFrame))
-        previousSettingsFrame = settings
+        updatePlacement(applicationURL: applicationURL, settings: settings, visible: screen.visibleFrame)
         viewModel.show(applicationURL: applicationURL)
         panel.orderFrontRegardless()
         followTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isVisible, let frame = self.settingsWindowFrame() else { return }
-                defer { self.previousSettingsFrame = frame }
-                guard let previous = self.previousSettingsFrame, frame.origin != previous.origin,
-                    let screen = NSScreen.screens.first(where: {
+                guard let screen = NSScreen.screens.first(where: {
                         $0.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
-                    })
-                else { return }
-                let translated = self.panel.frame.offsetBy(
-                    dx: frame.minX - previous.minX, dy: frame.minY - previous.minY)
-                self.panel.setFrameOrigin(
-                    CGPoint(
-                        x: max(
-                            screen.visibleFrame.minX, min(translated.minX, screen.visibleFrame.maxX - translated.width)),
-                        y: max(
-                            screen.visibleFrame.minY, min(translated.minY, screen.visibleFrame.maxY - translated.height)
-                        )))
+                    }) else { return }
+                self.updatePlacement(applicationURL: applicationURL, settings: frame, visible: screen.visibleFrame)
             }
+        }
+    }
+    func updatePlacement(applicationURL: URL, settings: CGRect?, visible: CGRect) {
+        let destination = authorizationGuideFrame(settings: settings, visible: visible)
+        if panel.contentView == nil || destination.size != panel.frame.size {
+            configure(applicationURL: applicationURL, frame: destination)
+        } else if panel.frame != destination {
+            panel.setFrame(destination, display: true)
         }
     }
     @objc func hide() {

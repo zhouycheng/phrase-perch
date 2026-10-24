@@ -115,4 +115,34 @@ final class FloatingMenuTests: PresentationTestCase {
         XCTAssertTrue(visible.contains(frame))
     }
 
+    @MainActor
+    func testAuthorizationPlacementTracksDiscoveryMovementResizeAndScreen() throws {
+        let guide = AuthorizationGuideWindowController()
+        defer { guide.hide() }
+        let url = Bundle.main.bundleURL
+        let screen = CGRect(x: 0, y: 0, width: 1600, height: 1200)
+        guide.updatePlacement(applicationURL: url, settings: nil, visible: screen)
+        XCTAssertTrue(screen.contains(guide.panel.frame))
+        for settings in [CGRect(x: 200, y: 100, width: 740, height: 1050),
+            CGRect(x: 400, y: 140, width: 740, height: 1050), CGRect(x: 400, y: 140, width: 600, height: 800)] {
+            guide.updatePlacement(applicationURL: url, settings: settings, visible: screen)
+            let expected = authorizationGuideFrame(settings: settings, visible: screen)
+            XCTAssertEqual(expected.midX, settings.minX + settings.width * 0.66, accuracy: 0.001)
+            XCTAssertEqual(expected.midY, settings.minY + settings.height * 0.2, accuracy: 0.001)
+            // AppKit aligns native windows to display pixels.
+            XCTAssertEqual(guide.panel.frame.midX, expected.midX, accuracy: 1)
+            XCTAssertEqual(guide.panel.frame.midY, expected.midY, accuracy: 1)
+            XCTAssertTrue(settings.contains(guide.panel.frame))
+            XCTAssertEqual(guide.panel.contentView?.frame.size, guide.panel.frame.size)
+            let drag = try XCTUnwrap(guide.panel.contentView?.subviews.compactMap { $0 as? ApplicationDragView }.first)
+            XCTAssertEqual(drag.applicationURL, url)
+            XCTAssertLessThanOrEqual(drag.frame.maxX, guide.panel.frame.width)
+        }
+        let other = CGRect(x: -1440, y: -200, width: 1440, height: 900)
+        let settings = CGRect(x: -1200, y: -100, width: 700, height: 700)
+        guide.updatePlacement(applicationURL: url, settings: settings, visible: other)
+        XCTAssertTrue(other.contains(guide.panel.frame))
+        XCTAssertTrue(settings.contains(guide.panel.frame))
+        try savePreview(try XCTUnwrap(guide.panel.contentView), name: "authorization-positioned.png")
+    }
 }
