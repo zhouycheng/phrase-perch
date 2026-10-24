@@ -18,7 +18,7 @@ final class AppDependencies {
     let mainWindow: MainWindowController
 
     init(
-        repository: ConfigurationRepository = ConfigurationRepository(),
+        repository: ConfigurationRepository = ConfigurationRepository(initialConfiguration: ApplicationCatalog.initialConfiguration()),
         authorizationEnvironment: AuthorizationEnvironment = AuthorizationEnvironment(),
         defaults: UserDefaults = .standard,
         titleService: TitleGenerationService = TitleGenerationService()

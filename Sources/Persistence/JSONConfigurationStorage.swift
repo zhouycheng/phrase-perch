@@ -4,7 +4,11 @@ import Observation
 actor JSONConfigurationStorage: ConfigurationStorage {
     let directory: URL
     var file: URL { directory.appendingPathComponent("configuration.json") }
-    init(directory: URL) { self.directory = directory }
+    private let initialConfiguration: AppConfiguration
+    init(directory: URL, initialConfiguration: AppConfiguration = AppConfiguration()) {
+        self.directory = directory
+        self.initialConfiguration = initialConfiguration
+    }
 
     func decode(_ data: Data) throws -> AppConfiguration {
         guard data.count <= 16 * 1024 * 1024 else { throw InputFailure("配置文件超过 16 MiB") }
@@ -13,7 +17,10 @@ actor JSONConfigurationStorage: ConfigurationStorage {
         return config
     }
     func load() throws -> AppConfiguration {
-        guard FileManager.default.fileExists(atPath: file.path) else { return AppConfiguration() }
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            try save(initialConfiguration)
+            return initialConfiguration
+        }
         return try decode(Data(contentsOf: file))
     }
     func backups() throws -> [URL] {

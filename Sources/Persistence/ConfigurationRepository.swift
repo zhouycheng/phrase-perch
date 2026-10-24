@@ -30,13 +30,14 @@ final class ConfigurationRepository {
     private var saveTask: Task<Void, Never>?
     private var loading = true
 
-    init(directory: URL? = nil, storage: (any ConfigurationStorage)? = nil) {
+    init(directory: URL? = nil, storage: (any ConfigurationStorage)? = nil, initialConfiguration: AppConfiguration = AppConfiguration()) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         disk =
             storage
             ?? JSONConfigurationStorage(
                 directory: directory
-                    ?? support.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar"))
+                    ?? support.appendingPathComponent("local.PhrasePerch"),
+                initialConfiguration: initialConfiguration)
         Task { await load() }
     }
 

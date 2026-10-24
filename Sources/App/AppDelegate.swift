@@ -7,12 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var instanceLock: Int32 = -1
     private var reopenObserver: NSObjectProtocol?
     private let reopenNotification = Notification.Name(
-        "\(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar").reopenSettings")
+        "\(Bundle.main.bundleIdentifier ?? "local.PhrasePerch").reopenSettings")
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard NSClassFromString("XCTestCase") == nil else { return }
         do {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-                "\(Bundle.main.bundleIdentifier ?? "local.FloatingInputBar").instance.lock")
+                "\(Bundle.main.bundleIdentifier ?? "local.PhrasePerch").instance.lock")
             guard let descriptor = try SingleInstanceLock.acquire(at: url) else {
                 DistributedNotificationCenter.default().postNotificationName(
                     reopenNotification,
