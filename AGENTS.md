@@ -40,7 +40,7 @@ Use four-space indentation, `UpperCamelCase` types, and `lowerCamelCase` members
 
 ## Testing Guidelines
 
-Name XCTest methods `test<Behavior>`. Add focused regressions for changed behavior, especially trigger eligibility, selection, cancellation, and configuration recovery. Use temporary directories and injected dependencies. Default runs render previews offscreen; enable `PHRASEPERCH_VISIBLE_UI_TESTS=1` in the Test scheme for planned desktop checks. Verify UI changes at 960 × 620, 880 × 560, and 1280 × 800 points.
+Name XCTest methods `test<Behavior>`. Add focused regressions for changed behavior, especially trigger eligibility, selection, cancellation, and configuration recovery. Use temporary directories and injected dependencies. Default runs render previews offscreen; enable `PHRASEPERCH_VISIBLE_UI_TESTS=1` in the Test scheme for planned desktop checks. Verify UI changes at 880 × 560, 960 × 620, 1070 × 620, and 1280 × 800 points.
 
 ## Commit & Pull Request Guidelines
 
@@ -48,6 +48,6 @@ Use concise Chinese commit summaries: `refactor(content): 重构 UI` or `fix(con
 
 ## Configuration & Agent Guidance
 
-Preserve configuration compatibility and user data under `~/Library/Application Support/local.FloatingInputBar/`. Test permissions against the actual built application; ad hoc signing can require reauthorization.
+Use the current schema version 1 under `~/Library/Application Support/local.PhrasePerch/`. Fresh installations seed empty Safari and ChatGPT profiles; imported files must use the current format. Test permissions against the actual built application; ad hoc signing can require reauthorization.
 
 For repository documentation, apply the `no-negative-echo` skill at `/Users/zhou/.agents/skills/no-negative-echo/SKILL.md`. Describe accepted behavior directly and review headings, filenames, and final text. Preserve existing user changes; commit and push when requested.
