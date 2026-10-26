@@ -1,6 +1,7 @@
 import Foundation
 
 struct FloatingMenuAnimationConfiguration: Equatable {
+    static let peakScale: CGFloat = 1.015
     let expandDuration: TimeInterval
     let collapseDuration: TimeInterval
     let reducedDuration: TimeInterval
@@ -8,8 +9,8 @@ struct FloatingMenuAnimationConfiguration: Equatable {
     let timingCurve: SIMD4<Float>
 
     init(
-        expandDuration: TimeInterval = 0.18, collapseDuration: TimeInterval = 0.12,
-        reducedDuration: TimeInterval = 0.08, collapsedScale: CGFloat = 0.2,
+        expandDuration: TimeInterval = 0.42, collapseDuration: TimeInterval = 0.12,
+        reducedDuration: TimeInterval = 0.08, collapsedScale: CGFloat = 0.24,
         timingCurve: SIMD4<Float> = SIMD4(0.16, 1, 0.3, 1)
     ) {
         self.expandDuration = expandDuration

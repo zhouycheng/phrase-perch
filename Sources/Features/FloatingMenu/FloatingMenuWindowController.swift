@@ -17,6 +17,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     private var visible = CGRect.zero
     private(set) var currentGroup: UUID?
     private var parents: [NavigationFrame] = []
+    private var pendingNavigation: NavigationFrame?
     private var hoverTask: Task<Void, Never>?
     private var hoverNode: RadialNode.Action?
     private var generation = 0
@@ -78,6 +79,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         self.visible = visible
         currentGroup = nil
         parents = []
+        pendingNavigation = nil
         cancelHover()
         generation += 1
         animator.cancel()
@@ -104,7 +106,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         entering = true
         panel.alphaValue = 1
         panel.ignoresMouseEvents = false
-        animator.animate(buttons: menuView.animatedButtons, layout: layout, expanding: true) { [weak self] in
+        animator.animate(layer: menuView.animationLayer, layout: layout, expanding: true) { [weak self] in
             guard let self, self.viewModel.finishShow(token) else { return }
             self.entering = false
             self.updateSelection(at: NSEvent.mouseLocation)
@@ -117,6 +119,11 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     }
     func hide() {
         cancelHover()
+        if let pendingNavigation {
+            restore(pendingNavigation)
+            _ = parents.popLast()
+            self.pendingNavigation = nil
+        }
         generation += 1
         changingPage = false
         entering = false
@@ -132,7 +139,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         collapseForClose(token: token, generation: generation, layout: layout)
     }
     private func collapseForClose(token: Int, generation expected: Int, layout: RadialLayout) {
-        animator.animate(buttons: menuView.animatedButtons, layout: layout, expanding: false) { [weak self] in
+        animator.animate(layer: menuView.animationLayer, layout: layout, expanding: false) { [weak self] in
             guard let self, generation == expected else { return }
             if let parent = parents.popLast() {
                 restore(parent)
@@ -161,12 +168,14 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
             return
         }
         parents.append(saved)
+        pendingNavigation = saved
         currentGroup = group
         self.page = page
         beginNavigation()
         let token = generation
-        animator.animate(buttons: menuView.animatedButtons, layout: saved.content.layout, expanding: false) { [weak self] in
+        animator.animate(layer: menuView.animationLayer, layout: saved.content.layout, expanding: false) { [weak self] in
             guard let self, generation == token, isPresented else { return }
+            pendingNavigation = nil
             render()
             expandNavigation()
         }
@@ -217,7 +226,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         }
         beginNavigation()
         let token = generation
-        animator.animate(buttons: menuView.animatedButtons, layout: layout, expanding: false) { [weak self] in
+        animator.animate(layer: menuView.animationLayer, layout: layout, expanding: false) { [weak self] in
             guard let self, generation == token, isPresented else { return }
             _ = parents.popLast()
             currentGroup = parent.group; page = parent.page
@@ -241,7 +250,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     private func expandNavigation() {
         guard let layout else { return }
         let token = generation
-        animator.animate(buttons: menuView.animatedButtons, layout: layout, expanding: true) { [weak self] in
+        animator.animate(layer: menuView.animationLayer, layout: layout, expanding: true) { [weak self] in
             guard let self, generation == token, isPresented else { return }
             viewModel.resetSelection(at: NSEvent.mouseLocation)
             changingPage = false

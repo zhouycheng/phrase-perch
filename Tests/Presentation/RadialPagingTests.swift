@@ -214,7 +214,7 @@ final class RadialPagingTests: PresentationTestCase {
         var steps = 0
         while controller.hasNextPage, steps < 30 {
             let previous = try XCTUnwrap(controller.layout)
-            let next = try XCTUnwrap(controller.panel.contentView?.subviews.compactMap { $0 as? FloatingMenuButton }
+            let next = try XCTUnwrap((controller.panel.contentView as? FloatingMenuView)?.buttons.compactMap { $0 as? FloatingMenuButton }
                 .first { $0.title == "下一页 →" })
             XCTAssertTrue(next.emphasized)
             let anchor = CGPoint(x: previous.frame.minX + next.frame.midX, y: previous.frame.minY + next.frame.midY)
@@ -279,18 +279,21 @@ final class RadialPagingTests: PresentationTestCase {
             visible: CGRect(x: 0, y: 0, width: 1400, height: 900)))
         _ = controller.viewModel.beginShow(initialMouse: .zero, requiresMovement: false)
         let layout = try XCTUnwrap(controller.layout)
-        let next = try XCTUnwrap(controller.panel.contentView?.subviews.compactMap { $0 as? FloatingMenuButton }.first { $0.emphasized })
+        let next = try XCTUnwrap((controller.panel.contentView as? FloatingMenuView)?.buttons.compactMap { $0 as? FloatingMenuButton }.first { $0.emphasized })
         let point = CGPoint(x: layout.frame.minX + next.frame.midX, y: layout.frame.minY + next.frame.midY)
         XCTAssertNil(controller.updateSelection(at: point))
         _ = controller.updateSelection(at: .zero)
         try await Task.sleep(for: .milliseconds(210))
         XCTAssertEqual(controller.page, 0)
         XCTAssertNil(controller.updateSelection(at: point))
-        try await Task.sleep(for: .milliseconds(210))
+        XCTAssertTrue(controller.isInteractive(CGPoint(x: point.x - layout.frame.minX, y: point.y - layout.frame.minY)))
+        for _ in 0..<100 where scheduler.durations.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(scheduler.durations.count, 1)
+        guard scheduler.durations.count == 1 else { return }
         scheduler.finish(0); scheduler.finish(1)
         XCTAssertEqual(controller.page, 1)
         let view = try XCTUnwrap(controller.panel.contentView)
-        let back = try XCTUnwrap(view.subviews.compactMap { $0 as? FloatingMenuButton }.first { $0.title == "← 上一页" })
+        let back = try XCTUnwrap((view as? FloatingMenuView)?.buttons.compactMap { $0 as? FloatingMenuButton }.first { $0.title == "← 上一页" })
         XCTAssertTrue(back.emphasized)
         try savePreview(view, name: "radial-next-page-return.png")
         controller.hide()
@@ -321,7 +324,7 @@ final class RadialPagingTests: PresentationTestCase {
         try requireVisibleUITests()
         let screen = try XCTUnwrap(NSScreen.main)
         let point = CGPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)
-        let controller = FloatingMenuWindowController()
+        let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(reduceMotion: { false }))
         defer { controller.hide() }
         controller.interactionMode = .persistent
         let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.native.radial", fallbackBundlePath: nil),
@@ -329,22 +332,29 @@ final class RadialPagingTests: PresentationTestCase {
         XCTAssertTrue(controller.show(profile: profile, at: point))
         let view = try XCTUnwrap(controller.panel.contentView as? FloatingMenuView)
         let first = try XCTUnwrap(view.buttons.first)
-        XCTAssertNotNil(first.layer?.animation(forKey: "radialMotion"))
+        XCTAssertNotNil(view.animationLayer?.animation(forKey: "radialMotion"))
         var earlyChoice = false
         controller.onSelect = { _ in earlyChoice = true }
         first.performClick(nil)
         XCTAssertFalse(earlyChoice)
         try await Task.sleep(for: .milliseconds(60))
-        let during = try XCTUnwrap(first.layer?.presentation())
+        let during = try XCTUnwrap(view.animationLayer?.presentation())
         XCTAssertLessThan(during.opacity, 1)
-        try await Task.sleep(for: .milliseconds(180))
+        XCTAssertGreaterThan(atan2(during.transform.m12, during.transform.m11), 0)
+        XCTAssertLessThan(hypot(during.transform.m11, during.transform.m12), 1)
+        let pivot = try XCTUnwrap(controller.layout).localCenter
+        let shownPivot = during.convert(pivot, to: during.superlayer)
+        XCTAssertEqual(shownPivot.x, pivot.x, accuracy: 0.05)
+        XCTAssertEqual(shownPivot.y, pivot.y, accuracy: 0.05)
+        try await Task.sleep(for: .milliseconds(420))
         XCTAssertTrue(controller.isPresented)
-        XCTAssertEqual(first.layer?.presentation()?.opacity ?? 0, 1, accuracy: 0.01)
+        XCTAssertEqual(view.animationLayer?.presentation()?.opacity ?? 0, 1, accuracy: 0.01)
+        XCTAssertTrue(CATransform3DIsIdentity(try XCTUnwrap(view.animationLayer).transform))
         var chosen: UUID?
         controller.onSelect = { chosen = $0; controller.hide() }
         first.performClick(nil)
         XCTAssertEqual(chosen, profile.buttons[0].id)
-        XCTAssertNotNil(first.layer?.animation(forKey: "radialMotion"))
+        XCTAssertNotNil(view.animationLayer?.animation(forKey: "radialMotion"))
         try await Task.sleep(for: .milliseconds(180))
         XCTAssertFalse(controller.panel.isVisible)
     }

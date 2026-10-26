@@ -112,9 +112,13 @@ final class GroupedMenuTests: PresentationTestCase {
         }
         XCTAssertNil(controller.currentGroup)
         XCTAssertEqual(controller.viewModel.page?.slots, root.slots)
+        let displayed = try XCTUnwrap(controller.viewModel.page)
         let index = scheduler.durations.count
         controller.enterGroup(p.groups[0].id)
         controller.hide()
+        XCTAssertNil(controller.currentGroup)
+        XCTAssertEqual(controller.viewModel.page?.slots, displayed.slots)
+        XCTAssertEqual(controller.layout?.anchor, displayed.layout.anchor)
         scheduler.finish(index)
         XCTAssertFalse(controller.isPresented)
     }
@@ -165,13 +169,19 @@ final class GroupedMenuTests: PresentationTestCase {
         try await Task.sleep(for: .milliseconds(210))
         XCTAssertNil(controller.currentGroup)
         _ = controller.updateSelection(at: point)
-        try await Task.sleep(for: .milliseconds(210))
+        let frame = try XCTUnwrap(controller.layout).frame
+        XCTAssertTrue(controller.isInteractive(CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)))
+        for _ in 0..<100 where scheduler.durations.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(controller.currentGroup, p.groups[0].id)
+        XCTAssertEqual(scheduler.durations.count, 1)
+        guard scheduler.durations.count == 1 else { return }
         scheduler.finish(0); scheduler.finish(1)
         let content = try XCTUnwrap(controller.viewModel.page)
         let back = content.layout.items[try XCTUnwrap(content.slots.firstIndex { $0?.action == .previous })]
         XCTAssertNil(controller.updateSelection(at: CGPoint(x: back.midX, y: back.midY)))
-        try await Task.sleep(for: .milliseconds(210))
+        for _ in 0..<100 where scheduler.durations.count < 3 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(scheduler.durations.count, 3)
+        guard scheduler.durations.count == 3 else { return }
         scheduler.finish(2); scheduler.finish(3)
         XCTAssertNil(controller.currentGroup)
         XCTAssertNil(controller.selectedID)
@@ -187,7 +197,7 @@ final class GroupedMenuTests: PresentationTestCase {
         store.update { $0.profiles = [p] }
         let model = ProfileEditorViewModel(profileID: p.id, repository: store, editing: ProfileEditingService(repository: store))
         defer { model.stop() }
-        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620), CGSize(width: 1280, height: 800)] {
+        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620), CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
             model.openGroup(nil)
             let root = NSHostingView(rootView: ProfileEditorView(viewModel: model, editorWidth: 300)
                 .background(Color(red: 23 / 255, green: 23 / 255, blue: 23 / 255)).preferredColorScheme(.dark))
@@ -216,18 +226,18 @@ final class GroupedMenuTests: PresentationTestCase {
         let visible = try XCTUnwrap(NSScreen.main).visibleFrame
         XCTAssertTrue(controller.show(profile: p, at: CGPoint(x: visible.midX, y: visible.midY)))
         defer { controller.hide() }
-        try await Task.sleep(for: .milliseconds(220))
+        try await Task.sleep(for: .milliseconds(470))
         for group in p.groups {
-            let button = try XCTUnwrap(controller.panel.contentView?.subviews.compactMap { $0 as? FloatingMenuButton }.first)
+            let button = try XCTUnwrap((controller.panel.contentView as? FloatingMenuView)?.buttons.compactMap { $0 as? FloatingMenuButton }.first)
             XCTAssertTrue(button.accessibilityPerformPress())
-            try await Task.sleep(for: .milliseconds(340))
+            try await Task.sleep(for: .milliseconds(600))
             XCTAssertEqual(controller.currentGroup, group.id)
             XCTAssertTrue(controller.panel.isVisible)
             XCTAssertNil(controller.selectedID)
         }
-        let back = try XCTUnwrap(controller.panel.contentView?.subviews.compactMap { $0 as? FloatingMenuButton }.first { $0.title == "← 上一页" })
+        let back = try XCTUnwrap((controller.panel.contentView as? FloatingMenuView)?.buttons.compactMap { $0 as? FloatingMenuButton }.first { $0.title == "← 上一页" })
         XCTAssertTrue(back.accessibilityPerformPress())
-        try await Task.sleep(for: .milliseconds(340))
+        try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(controller.currentGroup, p.groups[1].id)
         controller.hide()
         try await Task.sleep(for: .milliseconds(450))

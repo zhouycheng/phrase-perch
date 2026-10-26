@@ -201,7 +201,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
             XCTAssertTrue(session.show(token))
             XCTAssertTrue(
                 controller.show(profile: profile, at: point, initialMouse: point, requiresMovement: mode == .caret))
-            try await Task.sleep(for: .milliseconds(210))
+            try await Task.sleep(for: .milliseconds(470))
             let layout = try XCTUnwrap(controller.layout)
             let rect = layout.items[iteration % 3]
             let selectedPoint = CGPoint(x: rect.midX, y: rect.midY)

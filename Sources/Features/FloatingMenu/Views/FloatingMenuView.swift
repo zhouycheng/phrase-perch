@@ -6,13 +6,33 @@ final class FloatingMenuView: NSView {
     private(set) var buttons: [NSButton] = []
     var onSelect: ((RadialNode.Action) -> Void)?
     private var nodes: [RadialNode] = []
+    private let content = NSView(frame: .zero)
+    var animationLayer: CALayer? { content.layer }
     var allowsClick = false
     func configure(slots: [RadialNode?], layout: RadialLayout) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         nodes = []
-        for view in subviews { view.removeFromSuperview() }
+        content.layer?.removeAllAnimations()
+        content.layer?.transform = CATransform3DIdentity
+        for view in content.subviews { view.removeFromSuperview() }
+        content.layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
         frame = CGRect(origin: .zero, size: layout.frame.size)
         wantsLayer = true
         appearance = NSAppearance(named: .darkAqua)
+        content.frame = bounds
+        content.wantsLayer = true
+        if content.superview == nil { addSubview(content) }
+        content.layer?.opacity = 1
+        let ring = CAShapeLayer()
+        ring.path = CGPath(ellipseIn: CGRect(x: layout.localCenter.x - layout.ringRadius,
+            y: layout.localCenter.y - layout.ringRadius, width: layout.ringRadius * 2,
+            height: layout.ringRadius * 2), transform: nil)
+        ring.fillColor = nil
+        ring.strokeColor = NSColor.white.withAlphaComponent(0.045).cgColor
+        ring.lineWidth = 0.5
+        content.layer?.addSublayer(ring)
         buttons = []
         for (slot, entry) in slots.enumerated() {
             guard let node = entry else { continue }
@@ -30,24 +50,29 @@ final class FloatingMenuView: NSView {
             button.toolTip = String(node.detail.prefix(180))
             nodes.append(node)
             buttons.append(button)
-            addSubview(button)
+            content.addSubview(button)
         }
     }
-    var animatedButtons: [NSButton] { buttons }
     @objc private func selectNode(_ sender: NSButton) {
         guard nodes.indices.contains(sender.tag) else { return }
         onSelect?(nodes[sender.tag].action)
     }
     func node(at index: Int) -> RadialNode? { nodes.indices.contains(index) ? nodes[index] : nil }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let index = interactiveIndex(convert(point, from: superview)) else { return nil }
+        return buttons[index]
+    }
     func interactiveIndex(_ local: CGPoint) -> Int? {
-        buttons.firstIndex { button in
-            guard let layer = button.layer else { return false }
-            let shown = layer.presentation() ?? layer
-            guard shown.opacity > 0.05 else { return false }
-            let rect = shown.frame
-            let scale = min(rect.width / RadialLayout.buttonSize.width, rect.height / RadialLayout.buttonSize.height)
-            return CGPath(roundedRect: rect, cornerWidth: 12 * scale, cornerHeight: 12 * scale, transform: nil)
-                .contains(local)
+        guard let layer = animationLayer else { return nil }
+        let shown = layer.animation(forKey: "radialMotion") == nil ? layer : (layer.presentation() ?? layer)
+        let transform = shown.affineTransform()
+        guard shown.opacity > 0.05, abs(transform.a * transform.d - transform.b * transform.c) > 0.000001 else { return nil }
+        let offset = CGPoint(x: local.x - shown.position.x, y: local.y - shown.position.y)
+            .applying(transform.inverted())
+        let point = CGPoint(x: offset.x + shown.bounds.minX + shown.anchorPoint.x * shown.bounds.width,
+            y: offset.y + shown.bounds.minY + shown.anchorPoint.y * shown.bounds.height)
+        return buttons.firstIndex { button in
+            CGPath(roundedRect: button.frame, cornerWidth: 12, cornerHeight: 12, transform: nil).contains(point)
         }
     }
     func showSelection(_ index: Int?) {

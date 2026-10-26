@@ -519,15 +519,15 @@ final class NativePresentationTests: PresentationTestCase {
         let layout = try XCTUnwrap(controller.layout)
         XCTAssertEqual(layout.items.count, 3)
         XCTAssertFalse(controller.isInteractive(layout.localAnchor))
-        let root = try XCTUnwrap(controller.panel.contentView)
+        let root = try XCTUnwrap(controller.panel.contentView as? FloatingMenuView)
         for index in 0..<3 {
             let rect = layout.itemRect(index: index)
             XCTAssertTrue(root.hitTest(CGPoint(x: rect.midX, y: rect.midY)) is FloatingMenuButton)
-            let button = try XCTUnwrap(root.subviews[index] as? FloatingMenuButton)
+            let button = try XCTUnwrap(root.buttons[index] as? FloatingMenuButton)
             XCTAssertNil(button.action, "Click must never dispatch a paste")
         }
         try savePreview(root, name: "radial-normal.png")
-        (root.subviews.first as? FloatingMenuButton)?.selected = true
+        (root.buttons.first as? FloatingMenuButton)?.selected = true
         try savePreview(root, name: "radial-hover.png")
         let many = AppProfile(
             application: profile.application, displayName: "Preview",
@@ -541,7 +541,9 @@ final class NativePresentationTests: PresentationTestCase {
 
     @MainActor
     func testSelectionTracksPresentedButtonDuringEntrance() async throws {
-        let controller = FloatingMenuWindowController()
+        // Keep entrance active while the window server installs and removes native event monitors.
+        let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(
+            configuration: FloatingMenuAnimationConfiguration(expandDuration: 2), reduceMotion: { false }))
         controller.onDismiss = {}
         let profile = AppProfile(
             application: ApplicationIdentity(bundleIdentifier: "preview", fallbackBundlePath: nil),
@@ -550,15 +552,21 @@ final class NativePresentationTests: PresentationTestCase {
         defer { controller.hide() }
         XCTAssertTrue(controller.show(profile: profile, at: point, initialMouse: point, requiresMovement: true))
         XCTAssertNil(controller.updateSelection(at: point))
-        try await Task.sleep(for: .milliseconds(40))
-        let button = try XCTUnwrap(controller.panel.contentView?.subviews.first as? FloatingMenuButton)
-        let layer = try XCTUnwrap(button.layer?.presentation())
-        let shown = layer.frame
+        try await Task.sleep(for: .milliseconds(100))
+        let view = try XCTUnwrap(controller.panel.contentView as? FloatingMenuView)
+        let button = try XCTUnwrap(view.buttons.first)
+        let layer = try XCTUnwrap(view.animationLayer?.presentation())
+        let shown = layer.convert(CGPoint(x: button.frame.midX, y: button.frame.midY), to: layer.superlayer)
         let screenPoint = CGPoint(
-            x: controller.panel.frame.minX + shown.midX, y: controller.panel.frame.minY + shown.midY)
+            x: controller.panel.frame.minX + shown.x, y: controller.panel.frame.minY + shown.y)
         XCTAssertEqual(controller.updateSelection(at: screenPoint), profile.buttons[0].id)
         controller.hide()
         XCTAssertNil(controller.updateSelection(at: screenPoint))
+        let closing = try XCTUnwrap(view.animationLayer?.animation(forKey: "radialMotion") as? CAAnimationGroup)
+        let motion = try XCTUnwrap(closing.animations?.compactMap { $0 as? CABasicAnimation }.first { $0.keyPath == "transform" })
+        let from = try XCTUnwrap(motion.fromValue as? NSValue).caTransform3DValue
+        XCTAssertGreaterThan(atan2(from.m12, from.m11), 0)
+        XCTAssertLessThan(hypot(from.m11, from.m12), 1)
     }
 
     @MainActor

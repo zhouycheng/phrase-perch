@@ -37,11 +37,16 @@ struct RadialLayout {
         self.anchor = anchor
         self.center = center
         items = translated
-        frame = bounds.offsetBy(dx: center.x, dy: center.y)
-            .union(CGRect(origin: anchor, size: CGSize(width: 1, height: 1)))
+        let radius = ring.map { hypot(max(abs($0.minX), abs($0.maxX)), max(abs($0.minY), abs($0.maxY))) }
+            .max()! * FloatingMenuAnimationConfiguration.peakScale
+        let envelope = CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2)
+        frame = envelope.offsetBy(dx: center.x, dy: center.y)
+            .union(envelope.offsetBy(dx: anchor.x, dy: anchor.y))
             .insetBy(dx: -8, dy: -8).intersection(visible)
     }
     var localAnchor: CGPoint { CGPoint(x: anchor.x - frame.minX, y: anchor.y - frame.minY) }
+    var localCenter: CGPoint { CGPoint(x: center.x - frame.minX, y: center.y - frame.minY) }
+    var ringRadius: CGFloat { hypot(items[0].midX - center.x, items[0].midY - center.y) * 0.95 }
     func itemRect(index: Int) -> CGRect { items[index].offsetBy(dx: -frame.minX, dy: -frame.minY) }
     func selectedIndex(at point: CGPoint) -> Int? {
         items.firstIndex { CGPath(roundedRect: $0, cornerWidth: 12, cornerHeight: 12, transform: nil).contains(point) }

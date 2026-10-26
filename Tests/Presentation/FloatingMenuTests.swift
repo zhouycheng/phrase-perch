@@ -25,10 +25,10 @@ final class FloatingMenuTests: PresentationTestCase {
             application: ApplicationIdentity(bundleIdentifier: "preview.titles", fallbackBundlePath: nil),
             displayName: "Preview", buttons: titles.prefix(6).map { Snippet(title: $0, text: "正文") })
         XCTAssertTrue(controller.configure(profile: profile, at: CGPoint(x: 500, y: 400), visible: CGRect(x: 0, y: 0, width: 1000, height: 800)))
-        let root = try XCTUnwrap(controller.panel.contentView)
-        XCTAssertEqual(root.subviews.compactMap { ($0 as? NSButton)?.title }, Array(titles.prefix(6)).map(floatingButtonTitle))
+        let root = try XCTUnwrap(controller.panel.contentView as? FloatingMenuView)
+        XCTAssertEqual(root.buttons.map(\.title), Array(titles.prefix(6)).map(floatingButtonTitle))
         try savePreview(root, name: "radial-single-line-titles.png")
-        (root.subviews[4] as? FloatingMenuButton)?.selected = true
+        (root.buttons[4] as? FloatingMenuButton)?.selected = true
         try savePreview(root, name: "radial-single-line-titles-selected.png")
     }
 
