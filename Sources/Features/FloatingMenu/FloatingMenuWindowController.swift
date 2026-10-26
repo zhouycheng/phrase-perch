@@ -233,7 +233,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
             currentGroup = parent.group; page = parent.page
             viewModel.restore(restored)
             render()
-            expandNavigation()
+            expandNavigation(direction: .backward)
         }
     }
     private func restore(_ parent: NavigationFrame) {
@@ -248,10 +248,10 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         menuView.showSelection(nil)
         animator.cancel()
     }
-    private func expandNavigation() {
+    private func expandNavigation(direction: FloatingMenuAnimationConfiguration.Direction = .forward) {
         guard let layout else { return }
         let token = generation
-        animator.animate(layer: menuView.animationLayer, layout: layout, expanding: true) { [weak self] in
+        animator.animate(layer: menuView.animationLayer, layout: layout, expanding: true, direction: direction) { [weak self] in
             guard let self, generation == token, isPresented else { return }
             viewModel.resetSelection(at: NSEvent.mouseLocation)
             changingPage = false

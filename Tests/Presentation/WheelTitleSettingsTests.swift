@@ -64,4 +64,25 @@ final class WheelTitleSettingsTests: XCTestCase {
             }
         }
     }
+    @MainActor
+    func testBackwardAnimationMirrorsAnglesAndPreservesScaleAndTiming() throws {
+        let layout = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 400, y: 300), visible: CGRect(x: 0, y: 0, width: 1200, height: 800), count: 6))
+        func motion(_ direction: FloatingMenuAnimationConfiguration.Direction) throws -> CAKeyframeAnimation {
+            let layer = RecordingLayer()
+            let animator = FloatingMenuAnimator(scheduler: ManualAnimationScheduler(), reduceMotion: { false })
+            animator.animate(layer: layer, layout: layout, expanding: true, direction: direction) {}
+            let group = try XCTUnwrap(layer.recorded)
+            XCTAssertEqual(group.duration, 0.42)
+            animator.cancel()
+            return try XCTUnwrap(group.animations?.first as? CAKeyframeAnimation)
+        }
+        let first = try motion(.forward), second = try motion(.backward)
+        XCTAssertEqual(first.keyTimes, second.keyTimes)
+        for (a, b) in zip(try XCTUnwrap(first.values as? [NSValue]), try XCTUnwrap(second.values as? [NSValue])) {
+            let a = a.caTransform3DValue, b = b.caTransform3DValue
+            XCTAssertEqual(a.m11, b.m11, accuracy: 0.000001)
+            XCTAssertEqual(a.m12, -b.m12, accuracy: 0.000001)
+            XCTAssertEqual(a.m21, -b.m21, accuracy: 0.000001)
+        }
+    }
 }
