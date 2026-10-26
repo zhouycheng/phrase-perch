@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 
@@ -9,6 +10,17 @@ final class ProfileEditorViewModel {
     private var subscription: UUID?
     private(set) var session: SnippetEditorSession
     private(set) var deletionID: UUID?
+    private(set) var selectedNodeIDs = Set<UUID>()
+    private(set) var batchDeletionIDs: Set<UUID>?
+    private(set) var batchDeletionMessage = ""
+    private var batchDeletionMembers = Set<UUID>()
+    private(set) var batchIssue: String?
+    private(set) var marqueeRect: CGRect?
+    private(set) var draggingNodeIDs = Set<UUID>()
+    private(set) var insertionBeforeID: UUID?
+    private var gestureSelection = Set<UUID>()
+    private var gestureOrder: [UUID] = []
+    private var marqueeStart: CGPoint?
     var showSaveIssue = false
     private(set) var groupPath: [UUID] = []
     var currentGroup: UUID? { groupPath.last }
@@ -93,9 +105,12 @@ final class ProfileEditorViewModel {
             groupPath.removeSubrange(invalid...)
         }
         session.reconcile(ids)
+        selectedNodeIDs.formIntersection(nodes.map(\.id))
+        if !gestureOrder.isEmpty && gestureOrder != nodes.map(\.id) { cancelListGesture() }
         if saveStatus != "保存失败" { showSaveIssue = false }
     }
     func openGroup(_ id: UUID?) {
+        clearBatchSelection()
         if let id {
             if let index = groupPath.firstIndex(of: id) { groupPath = Array(groupPath.prefix(index + 1)) }
             else if nodes.contains(MenuNode(kind: .group, id: id)) { groupPath.append(id) }
@@ -172,6 +187,113 @@ final class ProfileEditorViewModel {
         guard deletionID == id else { return }
         deletionID = nil
         if let index = editing.removeSnippet(id, in: profileID) { session.deleted(at: index, remaining: ids) }
+    }
+    var batchProfiles: [AppProfile] { repository.configuration.profiles }
+    var isBatchSelecting: Bool { !selectedNodeIDs.isEmpty }
+    var isListGestureActive: Bool { marqueeRect != nil || !draggingNodeIDs.isEmpty }
+
+    func toggleNodeSelection(_ id: UUID) {
+        guard nodes.contains(where: { $0.id == id }) else { return }
+        if !selectedNodeIDs.insert(id).inserted { selectedNodeIDs.remove(id) }
+        batchIssue = nil
+    }
+    func activateNode(_ node: MenuNode) {
+        if isBatchSelecting { toggleNodeSelection(node.id) }
+        else if node.kind == .group { openGroup(node.id) }
+        else { select(node.id) }
+    }
+    func clearBatchSelection() {
+        cancelListGesture()
+        selectedNodeIDs = []
+        batchDeletionIDs = nil
+        batchIssue = nil
+    }
+    func canTransferSelection(to destination: AppProfile, group: UUID?, copying: Bool) -> Bool {
+        guard isBatchSelecting else { return false }
+        guard !copying, destination.id == profileID else { return true }
+        if group == currentGroup { return false }
+        return group == nil || !nodes.contains { node in
+            selectedNodeIDs.contains(node.id) && node.kind == .group
+                && profile?.containsGroup(node.id, descendant: group!) == true
+        }
+    }
+    func transferSelection(to destination: UUID, group: UUID?, copying: Bool) {
+        do {
+            try editing.transferNodes(selectedNodeIDs, from: profileID, group: currentGroup,
+                to: destination, group: group, copying: copying)
+            batchIssue = nil
+            if !copying { clearBatchSelection() }
+        } catch { batchIssue = error.localizedDescription }
+    }
+    func requestBatchDeletion() {
+        do {
+            let counts = try editing.deletionCounts(selectedNodeIDs, in: profileID, group: currentGroup)
+            batchDeletionIDs = selectedNodeIDs
+            batchDeletionMembers = counts.ids
+            batchDeletionMessage = "将删除 \(counts.groups) 个分组和 \(counts.contents) 条内容，包含所选分组内的全部内容。"
+        } catch { batchIssue = error.localizedDescription }
+    }
+    func cancelBatchDeletion() { batchDeletionIDs = nil }
+    func confirmBatchDeletion() {
+        guard let selection = batchDeletionIDs else { return }
+        batchDeletionIDs = nil
+        do {
+            guard try editing.deletionCounts(selection, in: profileID, group: currentGroup).ids == batchDeletionMembers else {
+                throw InputFailure("所选分组的内容已变化，请重新确认删除")
+            }
+            try editing.deleteNodes(selection, in: profileID, group: currentGroup)
+            clearBatchSelection()
+        } catch { batchIssue = error.localizedDescription }
+    }
+    func beginMarquee(at point: CGPoint, additive: Bool) {
+        guard !isListGestureActive else { return }
+        gestureSelection = selectedNodeIDs
+        gestureOrder = nodes.map(\.id)
+        marqueeStart = point
+        marqueeRect = CGRect(origin: point, size: .zero)
+        if !additive { selectedNodeIDs = [] }
+    }
+    func updateMarquee(to point: CGPoint, frames: [UUID: CGRect], additive: Bool) {
+        guard let start = marqueeStart else { return }
+        let rectangle = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
+            width: abs(point.x - start.x), height: abs(point.y - start.y))
+        marqueeRect = rectangle
+        let hits = Set(nodes.compactMap { node in frames[node.id]?.intersects(rectangle) == true ? node.id : nil })
+        selectedNodeIDs = hits.union(additive ? gestureSelection : [])
+    }
+    func beginReordering(_ id: UUID) {
+        guard !isListGestureActive, nodes.contains(where: { $0.id == id }) else { return }
+        gestureSelection = selectedNodeIDs
+        gestureOrder = nodes.map(\.id)
+        if !selectedNodeIDs.contains(id) { selectedNodeIDs = [id] }
+        draggingNodeIDs = selectedNodeIDs
+        insertionBeforeID = id
+    }
+    func updateInsertion(at point: CGPoint, frames: [UUID: CGRect]) {
+        guard !draggingNodeIDs.isEmpty else { return }
+        insertionBeforeID = nodes.first { node in
+            !draggingNodeIDs.contains(node.id) && frames[node.id].map { point.y < $0.midY } == true
+        }?.id
+    }
+    func finishListGesture(inside: Bool) {
+        guard inside else { cancelListGesture(); return }
+        let dragged = draggingNodeIDs, next = insertionBeforeID
+        resetListGesture()
+        guard !dragged.isEmpty else { return }
+        do { try editing.reorderNodes(dragged, in: profileID, group: currentGroup, before: next) }
+        catch { batchIssue = error.localizedDescription }
+    }
+    func cancelListGesture() {
+        if isListGestureActive { selectedNodeIDs = gestureSelection.intersection(nodes.map(\.id)) }
+        resetListGesture()
+    }
+    private func resetListGesture() {
+        marqueeRect = nil
+        marqueeStart = nil
+        draggingNodeIDs = []
+        insertionBeforeID = nil
+        gestureOrder = []
+        gestureSelection = []
     }
     func retrySave() { Task { _ = await repository.flush() } }
     func openConfiguration() {

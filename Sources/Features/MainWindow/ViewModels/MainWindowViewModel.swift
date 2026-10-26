@@ -35,6 +35,7 @@ final class MainWindowViewModel {
     var runningApplications: [ApplicationChoice] { ApplicationCatalog.runningApplications() }
     func selectProfile(_ id: UUID) {
         guard profiles.contains(where: { $0.id == id }) else { return }
+        if selectedProfile != id { selectedEditor?.clearBatchSelection() }
         selectedProfile = id
     }
     func setEnabled(_ id: UUID, _ value: Bool) { editing.editProfile(id) { $0.isEnabled = value } }

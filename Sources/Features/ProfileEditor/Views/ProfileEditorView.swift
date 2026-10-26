@@ -11,7 +11,8 @@ struct ProfileEditorView: View {
                     displayMode: viewModel.displayMode,
                     toggleModifier: viewModel.toggleModifierTrigger, toggleShortcut: viewModel.toggleShortcutTrigger,
                     addSnippet: viewModel.addSnippet, addGroup: viewModel.addGroup,
-                    addAttachments: viewModel.addAttachments, importingAttachment: viewModel.isImportingAttachment)
+                    addAttachments: viewModel.addAttachments, importingAttachment: viewModel.isImportingAttachment,
+                    batchViewModel: viewModel)
                 GroupContentsView(viewModel: viewModel)
 
             }
@@ -27,12 +28,10 @@ struct ProfileEditorView: View {
                         Color.white.opacity(0.08).frame(height: 1)
                         if let file = snippet.attachment {
                             AttachmentEditorView(viewModel: viewModel, file: file)
-                        } else {
-                            SnippetBodyEditorView(
-                                text: Binding(
-                                    get: { viewModel.text(snippet.id) }, set: { viewModel.setText($0, id: snippet.id) }),
-                                issue: viewModel.textIssue)
-                        }
+                        } else { SnippetBodyEditorView(
+                            text: Binding(
+                                get: { viewModel.text(snippet.id) }, set: { viewModel.setText($0, id: snippet.id) }),
+                            issue: viewModel.textIssue) }
                         SnippetSaveStatusView(viewModel: viewModel, snippet: snippet)
                     }
                     .padding(EditorStyle.contentInset)
