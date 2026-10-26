@@ -113,7 +113,7 @@ final class ProfileEditorViewModelTests: XCTestCase {
         XCTAssertEqual(repository.configuration, before)
         model.setTitle("", id: snippets[9].id)
         XCTAssertEqual(repository.saveStatus, "待补全")
-        XCTAssertEqual(model.titleIssue, "请填写文案标题")
+        XCTAssertEqual(model.titleIssue, "请填写内容标题")
         model.setTitle("补齐", id: snippets[9].id)
         let saved = await repository.flush()
         XCTAssertTrue(saved)

@@ -10,7 +10,8 @@ struct ProfileEditorView: View {
                 SnippetToolbarView(
                     displayMode: viewModel.displayMode,
                     toggleModifier: viewModel.toggleModifierTrigger, toggleShortcut: viewModel.toggleShortcutTrigger,
-                    addSnippet: viewModel.addSnippet, addGroup: viewModel.addGroup)
+                    addSnippet: viewModel.addSnippet, addGroup: viewModel.addGroup,
+                    addAttachments: viewModel.addAttachments, importingAttachment: viewModel.isImportingAttachment)
                 GroupContentsView(viewModel: viewModel)
 
             }
@@ -24,23 +25,27 @@ struct ProfileEditorView: View {
                                 get: { viewModel.title(snippet.id) }, set: { viewModel.setTitle($0, id: snippet.id) }),
                             issue: viewModel.titleIssue)
                         Color.white.opacity(0.08).frame(height: 1)
-                        SnippetBodyEditorView(
-                            text: Binding(
-                                get: { viewModel.text(snippet.id) }, set: { viewModel.setText($0, id: snippet.id) }),
-                            issue: viewModel.textIssue)
+                        if let file = snippet.attachment {
+                            AttachmentEditorView(viewModel: viewModel, file: file)
+                        } else {
+                            SnippetBodyEditorView(
+                                text: Binding(
+                                    get: { viewModel.text(snippet.id) }, set: { viewModel.setText($0, id: snippet.id) }),
+                                issue: viewModel.textIssue)
+                        }
                         SnippetSaveStatusView(viewModel: viewModel, snippet: snippet)
                     }
                     .padding(EditorStyle.contentInset)
                     .id(snippet.id)
                 } else {
-                    EmptyStateView(title: "选择文案开始编辑", symbol: "text.alignleft")
+                    EmptyStateView(title: "选择内容开始编辑", symbol: "text.alignleft")
                 }
             }
             .frame(width: editorWidth)
             .frame(maxHeight: .infinity)
         }
         .alert(
-            "删除这条文案？",
+            "删除这条内容？",
             isPresented: Binding(
                 get: { viewModel.deletionID != nil },
                 set: { if !$0 { viewModel.cancelDeletion() } }), presenting: viewModel.deletionID

@@ -8,7 +8,7 @@ struct AboutView: View {
             Image(nsImage: metadata.icon)
                 .resizable().interpolation(.high).frame(width: 112, height: 112)
             Text("PhrasePerch").font(.largeTitle.weight(.semibold))
-            Text("按应用管理快捷文案").font(.callout).foregroundStyle(.secondary)
+            Text("按应用管理快捷内容").font(.callout).foregroundStyle(.secondary)
             Text("v\(metadata.version)").font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

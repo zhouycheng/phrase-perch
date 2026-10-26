@@ -14,6 +14,7 @@ struct PasteEnvironment {
     }
     var authorized: () -> Bool = { CGPreflightPostEventAccess() && !IsSecureEventInputEnabled() }
     var copy: (String) throws -> Int = { try ClipboardService.copy($0) }
+    var copyFile: (ClipboardFile) throws -> Int = { try ClipboardService.copyFile($0) }
     var clipboardRevision: () -> Int = { NSPasteboard.general.changeCount }
     var dispatch: () -> Bool = { PasteEventDispatcher.dispatch() }
 }

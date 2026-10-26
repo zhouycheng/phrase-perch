@@ -5,11 +5,15 @@ struct SnippetButtonView: View {
     let selected: Bool
     let size: CGSize
     let action: () -> Void
+    var characterLimit = 10
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Text(floatingButtonTitle(snippet.title)).font(.system(size: snippetTitleFontSize, weight: .medium))
+            HStack(spacing: 7) {
+                if snippet.attachment != nil { Image(systemName: "paperclip").frame(width: 13) }
+                Text(floatingButtonTitle(snippet.title, characterLimit: characterLimit))
+            }.font(.system(size: snippetTitleFontSize, weight: .medium))
                 .foregroundStyle(selected ? Color.black.opacity(0.9) : Color.white.opacity(0.8))
                 .lineLimit(1).truncationMode(.tail)
                 .frame(width: size.width - 20).padding(.horizontal, 10)

@@ -11,13 +11,13 @@ final class FloatingMenuViewModel {
     private var movement = SelectionMovement(initialMouse: .zero, requiresMovement: false)
     private var presentation = MenuPresentation()
     var isPresented: Bool { presentation.presented }
-    func configure(profile: AppProfile, at point: CGPoint, visible: CGRect) -> Bool {
-        configure(nodes: RadialNode.contents(profile: profile, group: nil), at: point, visible: visible)
+    func configure(profile: AppProfile, at point: CGPoint, visible: CGRect, characterLimit: Int = 10) -> Bool {
+        configure(nodes: RadialNode.contents(profile: profile, group: nil), at: point, visible: visible, characterLimit: characterLimit)
     }
     func configure(nodes: [RadialNode], at point: CGPoint, visible: CGRect, hasPrevious: Bool = false,
-        previousAngle: CGFloat? = nil) -> Bool {
+        previousAngle: CGFloat? = nil, characterLimit: Int = 10) -> Bool {
         guard let page = RadialPage(nodes: nodes, anchor: point, visible: visible,
-            hasPrevious: hasPrevious, previousAngle: previousAngle) else {
+            hasPrevious: hasPrevious, previousAngle: previousAngle, characterLimit: characterLimit) else {
             failureMessage = "当前屏幕空间不足，无法展示轮盘。"
             return false
         }
@@ -51,7 +51,7 @@ final class FloatingMenuViewModel {
             return nil
         }
         acceptsHover = movement.update(screenPoint)
-        selectedID = acceptsHover && page?.slots.contains(where: { $0?.textID != nil && $0?.textID == hitID }) == true ? hitID : nil
+        selectedID = acceptsHover && page?.slots.contains(where: { $0?.contentID != nil && $0?.contentID == hitID }) == true ? hitID : nil
         return selectedID
     }
 }

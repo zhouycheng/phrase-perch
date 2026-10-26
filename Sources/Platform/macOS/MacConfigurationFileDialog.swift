@@ -3,6 +3,14 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MacConfigurationFileDialog: ConfigurationFileDialog {
+    static let configurationPackage = UTType(exportedAs: "local.PhrasePerch.configuration", conformingTo: .package)
+    func chooseAttachments(multiple: Bool) -> [URL] {
+        let panel = NSOpenPanel()
+        panel.title = multiple ? "添加附件" : "替换附件"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = multiple
+        return panel.runModal() == .OK ? panel.urls : []
+    }
     func chooseApplications() -> [URL] {
         let panel = applicationPanel(allowsMultipleSelection: true)
         return panel.runModal() == .OK ? panel.urls : []
@@ -23,14 +31,15 @@ final class MacConfigurationFileDialog: ConfigurationFileDialog {
 
     func chooseImport() -> URL? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = [.json, Self.configurationPackage]
+        panel.treatsFilePackagesAsDirectories = false
         return panel.runModal() == .OK ? panel.url : nil
     }
 
     func chooseExport() -> URL? {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "PhrasePerch.json"
+        panel.allowedContentTypes = [Self.configurationPackage]
+        panel.nameFieldStringValue = "PhrasePerch.phraseperch"
         return panel.runModal() == .OK ? panel.url : nil
     }
 

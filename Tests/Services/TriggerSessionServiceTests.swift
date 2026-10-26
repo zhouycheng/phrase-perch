@@ -13,6 +13,7 @@ final class TriggerSessionServiceTests: XCTestCase {
     private var flags: NSEvent.ModifierFlags = []
     private var front: NSRunningApplication?
     private var snippet = Snippet(title: "验收", text: "测试 👩‍💻\n第二行")
+    private var attachmentURL: URL?
     private var defaults: UserDefaults!
     private var suite = ""
 
@@ -43,7 +44,11 @@ final class TriggerSessionServiceTests: XCTestCase {
         environment.primaryTop = { 900 }
         environment.screenIdentifier = { _ in 42 }
         environment.shortcutKey = { nil }
-        service = TriggerSessionService(store: store, input: TextInsertionService(worker: worker, environment: paste.environment),
+        service = TriggerSessionService(store: store, input: ContentInsertionService(worker: worker, environment: paste.environment,
+            retainAttachment: { _ in
+                guard let url = self.attachmentURL else { throw InputFailure("Missing attachment fixture") }
+                return url
+            }),
             floating: menu, authorization: auth, monitor: monitor, entry: AppEntryService(store: store), environment: environment)
         service.start()
     }
@@ -106,6 +111,27 @@ final class TriggerSessionServiceTests: XCTestCase {
         monitor.onShortcutDown?(); monitor.onShortcutUp?()
         XCTAssertFalse(menu.isPresented)
         XCTAssertEqual(paste.dispatches, 0)
+    }
+    func testAttachmentSelectionUsesPasteWhenTextDirectWriteIsEnabled() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("test".utf8).write(to: url)
+        attachmentURL = url
+        repository.update {
+            $0.preferences.copyOnInsert = false
+            $0.preferences.menuTitleCharacterLimit = 30
+            $0.profiles[0].buttons[0].content = .attachment(AttachmentReference(fileName: "test.txt", byteCount: 4))
+        }
+        await worker.setCapture(canPaste: true, canDirectWrite: false)
+        monitor.onShortcutDown?(); monitor.onShortcutUp?()
+        try await settle()
+        XCTAssertEqual(menu.titleCharacterLimit, 30)
+        menu.onSelect?(snippet.id); menu.onSelect?(snippet.id)
+        try await settle(120)
+        XCTAssertEqual(paste.fileCopies, [url])
+        XCTAssertEqual(paste.dispatches, 1)
+        let writes = await worker.directWrites
+        XCTAssertTrue(writes.isEmpty)
     }
     func testQuickOptionReleaseCancelsAndHeldOptionCommits() async throws {
         modifier(.option); modifier([])

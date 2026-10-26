@@ -7,7 +7,7 @@ struct GroupContentsView: View {
             if !viewModel.groupPath.isEmpty {
                 ScrollView(.horizontal) {
                     HStack {
-                        Button("全部文案") { viewModel.openGroup(nil) }
+                        Button("全部内容") { viewModel.openGroup(nil) }
                         ForEach(viewModel.groupPath, id: \.self) { id in
                             Image(systemName: "chevron.right").font(.caption)
                             Button(viewModel.groupTitle(id)) { viewModel.openGroup(id) }
@@ -80,12 +80,12 @@ struct GroupContentsView: View {
                         .background(viewModel.session.selectedID == node.id ? Color.accentColor.opacity(0.22) : Color.white.opacity(0.05))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    if viewModel.nodes.isEmpty { Text("添加文案或分组").foregroundStyle(.secondary).padding() }
+                    if viewModel.nodes.isEmpty { Text("添加文案、附件或分组").foregroundStyle(.secondary).padding() }
                 }
             }
-            Text(viewModel.hierarchyIssue ?? viewModel.saveStatus)
+            Text(viewModel.attachmentMessage ?? viewModel.hierarchyIssue ?? viewModel.saveStatus)
                 .font(.caption)
-                .foregroundStyle(viewModel.hierarchyIssue == nil ? Color.secondary : Color.orange)
+                .foregroundStyle(viewModel.hierarchyIssue == nil && viewModel.attachmentMessage == nil ? Color.secondary : Color.orange)
                 .lineLimit(2)
         }
         .padding(.horizontal, 16)

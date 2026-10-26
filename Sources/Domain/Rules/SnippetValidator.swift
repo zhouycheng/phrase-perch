@@ -2,12 +2,16 @@ import Foundation
 
 enum SnippetValidator {
     static func validate(_ snippet: Snippet) throws {
-        if let message = SnippetValidator.titleIssue(snippet.title) ?? SnippetValidator.textIssue(snippet.text) {
-            throw InputFailure(message)
+        if let message = titleIssue(snippet.title) { throw InputFailure(message) }
+        switch snippet.content {
+        case .text(let text):
+            if let message = textIssue(text) { throw InputFailure(message) }
+        case .attachment(let file):
+            try file.validate()
         }
     }
     static func titleIssue(_ title: String) -> String? {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "请填写文案标题" : nil
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "请填写内容标题" : nil
     }
     static func textIssue(_ text: String) -> String? {
         if text.isEmpty { return "请填写文案正文" }

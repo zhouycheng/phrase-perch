@@ -7,6 +7,7 @@ final class ConfigurationFileService {
     private let editing: ProfileEditingService
     private let dialog: any ConfigurationFileDialog
     var notice = ""
+    private(set) var isImporting = false
     var onInvalidate: (() -> Void)?
     init(store: ConfigurationRepository, editing: ProfileEditingService, dialog: any ConfigurationFileDialog) {
         self.store = store
@@ -78,22 +79,28 @@ final class ConfigurationFileService {
     func chooseApplications() {
         dialog.chooseApplications().forEach(addApplication)
     }
+    func chooseAttachments(multiple: Bool = true) -> [URL] { dialog.chooseAttachments(multiple: multiple) }
 
     func importConfiguration() {
+        guard !isImporting else { return }
         onInvalidate?()
         guard let url = dialog.chooseImport() else { return }
         Task { await importConfiguration(from: url) }
     }
 
     func importConfiguration(from url: URL) async {
+        guard !isImporting else { return }
+        isImporting = true
+        defer { isImporting = false }
         do {
-            let config = try await store.readImport(url)
+            let prepared = try await store.readImport(url)
+            let config = prepared.configuration
             if dialog.confirmReplacement(
                 profileCount: config.profiles.count,
                 snippetCount: config.profiles.reduce(0) { $0 + $1.buttons.count })
             {
-                await store.replace(with: config)
-            }
+                await store.replace(with: prepared)
+            } else { await store.discardImport(prepared) }
         } catch { store.report(.importFile, message: error.localizedDescription) }
     }
 

@@ -26,7 +26,7 @@ struct MainWindowView: View {
         .disabled(viewModel.isRestarting)
 
         .alert(
-            "移除应用及其全部文案？",
+            "移除应用及其全部快捷内容？",
             isPresented: Binding(
                 get: { viewModel.deleteProfile != nil }, set: { if !$0 { viewModel.cancelDeletion() } }),
             presenting: viewModel.deleteProfile

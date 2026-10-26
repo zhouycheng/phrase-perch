@@ -10,7 +10,7 @@ struct EditorRingLayout {
         CircularButtonLayout.edgeGap(first, second)
     }
 
-    init(size: CGSize, count: Int, buttonWidth: CGFloat = Self.buttonSize.width) {
+    init(size: CGSize, count: Int, buttonWidth: CGFloat = Self.buttonSize.width, buttonWidths: [CGFloat]? = nil) {
         guard count > 0, count <= SnippetEditorSession.pageSize else {
             items = []
             canvasSize = size
@@ -18,7 +18,8 @@ struct EditorRingLayout {
             return
         }
         let buttonSize = CGSize(width: buttonWidth, height: Self.buttonSize.height)
-        let ring = CircularButtonLayout.items(count: count, buttonSize: buttonSize)
+        let ring = buttonWidths.map { CircularButtonLayout.outwardItems(widths: $0, height: buttonSize.height).items }
+            ?? CircularButtonLayout.items(count: count, buttonSize: buttonSize)
         let bounds = ring.reduce(CGRect(x: -24, y: -24, width: 48, height: 48)) { $0.union($1) }
         let canvasSize = CGSize(
             width: max(size.width, max(abs(bounds.minX), abs(bounds.maxX)) * 2 + 4),

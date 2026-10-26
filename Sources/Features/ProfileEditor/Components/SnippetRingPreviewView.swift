@@ -7,9 +7,11 @@ struct SnippetRingPreviewView<Actions: View>: View {
     let requestDeletion: (UUID) -> Void
     let addSnippet: () -> Void
     let actions: (UUID) -> Actions
+    var characterLimit = 10
     var body: some View {
         GeometryReader { geometry in
-            let layout = EditorRingLayout(size: geometry.size, count: snippets.count, buttonWidth: snippetButtonWidth(for: snippets.map(\.title)))
+            let layout = EditorRingLayout(size: geometry.size, count: snippets.count,
+                buttonWidths: snippets.map { snippetButtonWidth(for: [$0.title], characterLimit: characterLimit, accessoryWidth: $0.attachment == nil ? 0 : 20) })
             if snippets.isEmpty {
                 EmptyStateView(title: "添加文案", symbol: "text.badge.plus", action: addSnippet)
             } else {
@@ -22,9 +24,9 @@ struct SnippetRingPreviewView<Actions: View>: View {
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                         ForEach(Array(zip(snippets, layout.items)), id: \.0.id) { snippet, rect in
-                            SnippetButtonView(snippet: snippet, selected: selectedID == snippet.id, size: rect.size) {
+                            SnippetButtonView(snippet: snippet, selected: selectedID == snippet.id, size: rect.size, action: {
                                 select(snippet.id)
-                            }
+                            }, characterLimit: characterLimit)
                             .contextMenu { actions(snippet.id) }
                             .position(x: rect.midX, y: rect.midY)
                         }

@@ -17,15 +17,17 @@ struct SnippetSaveStatusView: View {
                 Text(viewModel.saveStatus)
             }
             Spacer(minLength: 4)
-            Text("\(snippet.text.utf8.count) B / 64 KiB").monospacedDigit()
+            if let file = snippet.attachment {
+                Text(ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file)).monospacedDigit()
+            } else { Text("\(snippet.text.utf8.count) B / 64 KiB").monospacedDigit() }
             Button(role: .destructive) {
                 viewModel.requestDeletion(snippet.id)
             } label: {
                 Image(systemName: "trash").frame(width: 24, height: 24).contentShape(Rectangle())
             }
             .buttonStyle(.plain).foregroundStyle(.red)
-            .help("删除文案 \(snippet.title)")
-            .accessibilityLabel("删除当前编辑文案")
+            .help("删除内容 \(snippet.title)")
+            .accessibilityLabel(snippet.attachment == nil ? "删除当前编辑文案" : "删除当前附件")
         }
         .font(.system(size: 11)).foregroundStyle(.secondary)
     }

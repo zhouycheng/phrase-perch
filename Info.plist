@@ -24,5 +24,21 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>local.PhrasePerch.configuration</string>
+			<key>UTTypeDescription</key>
+			<string>PhrasePerch 备份包</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>com.apple.package</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>phraseperch</string></array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

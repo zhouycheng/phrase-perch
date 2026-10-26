@@ -28,7 +28,7 @@ final class ConfigurationFormatTests: XCTestCase {
         try await disk.save(config)
         let restored = try await disk.load()
         XCTAssertEqual(restored, config)
-        for version in [0, 2, 3, 4, 999] {
+        for version in [0, 3, 4, 999] {
             var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as! [String: Any]
             object["schemaVersion"] = version
             do { _ = try await disk.decode(JSONSerialization.data(withJSONObject: object)); XCTFail("Unsupported version") } catch {}

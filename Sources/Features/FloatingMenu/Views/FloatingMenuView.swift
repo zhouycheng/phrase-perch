@@ -9,7 +9,7 @@ final class FloatingMenuView: NSView {
     private let content = NSView(frame: .zero)
     var animationLayer: CALayer? { content.layer }
     var allowsClick = false
-    func configure(slots: [RadialNode?], layout: RadialLayout) {
+    func configure(slots: [RadialNode?], layout: RadialLayout, titles: [String?]? = nil) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -45,7 +45,8 @@ final class FloatingMenuView: NSView {
             button.wantsLayer = true
             button.isBordered = false
             button.focusRingType = .none
-            button.title = floatingButtonTitle(node.title)
+            button.title = titles?[slot] ?? node.displayTitle(characterLimit: 10)
+            button.symbolName = node.symbol
             button.setAccessibilityLabel(node.title)
             button.toolTip = String(node.detail.prefix(180))
             nodes.append(node)

@@ -59,7 +59,7 @@ final class GroupedMenuTests: PresentationTestCase {
             CGRect(x: -1440, y: -300, width: 1440, height: 900), CGRect(x: 0, y: 900, width: 900, height: 1440)] {
             let center = CGPoint(x: screen.midX, y: screen.midY)
             for count in [1, 2, 3, 4, 5, 6, 7, 12, 13, 512] {
-                let nodes = (0..<count).map { RadialNode.text(Snippet(title: "文案 \($0)", text: "正文")) }
+                let nodes = (0..<count).map { RadialNode.content(Snippet(title: "文案 \($0)", text: "正文")) }
                 let page = try XCTUnwrap(RadialPage(nodes: nodes, anchor: center, visible: screen, hasPrevious: true))
                 let layout = page.layout
                 XCTAssertEqual(layout.center, center)
@@ -126,7 +126,7 @@ final class GroupedMenuTests: PresentationTestCase {
     func testDirectInsertionNeverTouchesClipboardAndWritesOnce() async throws {
         for supported in [true, false] {
             let worker = StubInputWorker(), system = StubPasteSystem()
-            let service = TextInsertionService(worker: worker, environment: system.environment)
+            let service = ContentInsertionService(worker: worker, environment: system.environment)
             let text = "中文 👩🏽‍💻\n第二行", token = UUID(), target = NSRunningApplication.current
             await worker.setDirectSupported(supported)
             await worker.setReadback(before: "前原文后", selection: NSRange(location: 1, length: 2), readings: ["前\(text)后"])
@@ -144,7 +144,7 @@ final class GroupedMenuTests: PresentationTestCase {
     @MainActor
     func testDirectWriteFailureNeverRetriesOrCopies() async throws {
         let worker = StubInputWorker(), system = StubPasteSystem()
-        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let service = ContentInsertionService(worker: worker, environment: system.environment)
         let token = UUID(), target = NSRunningApplication.current
         await worker.setDirectFailure()
         _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)

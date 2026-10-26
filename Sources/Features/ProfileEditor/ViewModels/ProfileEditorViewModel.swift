@@ -14,15 +14,20 @@ final class ProfileEditorViewModel {
     var currentGroup: UUID? { groupPath.last }
     var nodes: [MenuNode] { profile?.children(of: currentGroup) ?? [] }
     var onOpenConfiguration: (() -> Void)?
+    private let chooseAttachments: (Bool) -> [URL]
+    private(set) var isImportingAttachment = false
+    private(set) var attachmentMessage: String?
+    private(set) var attachmentAvailable: Bool?
 
     init(
         profileID: UUID, repository: ConfigurationRepository, editing: ProfileEditingService,
-        session: SnippetEditorSession = SnippetEditorSession()
+        session: SnippetEditorSession = SnippetEditorSession(), chooseAttachments: @escaping (Bool) -> [URL] = { _ in [] }
     ) {
         self.profileID = profileID
         self.repository = repository
         self.editing = editing
         self.session = session
+        self.chooseAttachments = chooseAttachments
         reconcile()
         subscription = repository.observe { [weak self] in self?.reconcile() }
     }
@@ -62,19 +67,22 @@ final class ProfileEditorViewModel {
     var saveStatus: String { repository.saveStatus }
     var configurationIssue: ConfigurationIssue? { repository.saveIssue }
     var titleIssue: String? { selectedSnippet.flatMap { SnippetValidator.titleIssue($0.title) } }
-    var textIssue: String? { selectedSnippet.flatMap { SnippetValidator.textIssue($0.text) } }
+    var textIssue: String? { selectedSnippet.flatMap { $0.attachment == nil ? SnippetValidator.textIssue($0.text) : nil } }
+    func isAttachment(_ id: UUID) -> Bool { profile?.buttons.first { $0.id == id }?.attachment != nil }
     func title(_ id: UUID) -> String { profile?.buttons.first { $0.id == id }?.title ?? "" }
     func text(_ id: UUID) -> String { profile?.buttons.first { $0.id == id }?.text ?? "" }
     func setTitle(_ value: String, id: UUID) {
         editing.editSnippet(profileID: profileID, snippetID: id) { $0.title = value }
     }
     func setText(_ value: String, id: UUID) {
-        editing.editSnippet(profileID: profileID, snippetID: id) { $0.text = value }
+        editing.editSnippet(profileID: profileID, snippetID: id) { if $0.attachment == nil { $0.text = value } }
     }
     func select(_ id: UUID) {
         guard ids.contains(id) else { return }
         session.select(id, in: ids)
         showSaveIssue = false
+        attachmentMessage = nil
+        attachmentAvailable = nil
     }
     func showPage(_ page: Int) {
         session.showPage(page, in: ids)
@@ -122,6 +130,37 @@ final class ProfileEditorViewModel {
     func reorder(_ node: MenuNode, by distance: Int) { editing.reorder(node, in: profileID, by: distance) }
     func removeGroup(_ id: UUID) { editing.removeGroup(id, in: profileID) }
     func addSnippet() { if let id = editing.addSnippet(to: profileID, group: currentGroup) { select(id) } }
+    func addAttachments() {
+        guard !isImportingAttachment else { return }
+        let urls = chooseAttachments(true), group = currentGroup
+        guard !urls.isEmpty else { return }
+        isImportingAttachment = true
+        attachmentMessage = nil
+        Task {
+            var failures: [String] = []
+            for url in urls {
+                do { select(try await editing.addAttachment(from: url, to: profileID, group: group)) }
+                catch { failures.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
+            }
+            attachmentMessage = failures.isEmpty ? nil : failures.joined(separator: "；")
+            isImportingAttachment = false
+        }
+    }
+    func replaceAttachment() {
+        guard !isImportingAttachment, let id = selectedSnippet?.id, let url = chooseAttachments(false).first else { return }
+        isImportingAttachment = true
+        attachmentMessage = nil
+        Task {
+            do { try await editing.replaceAttachment(id, in: profileID, from: url) }
+            catch { attachmentMessage = error.localizedDescription }
+            isImportingAttachment = false
+        }
+    }
+    func checkAttachment(_ file: AttachmentReference) async {
+        let available = (try? await repository.attachmentURL(file)) != nil
+        guard selectedSnippet?.attachment == file else { return }
+        attachmentAvailable = available
+    }
     func duplicate(_ id: UUID) { if let created = editing.duplicateSnippet(id, in: profileID) { select(created) } }
     func move(_ id: UUID, by distance: Int) {
         editing.moveSnippet(id, in: profileID, by: distance)

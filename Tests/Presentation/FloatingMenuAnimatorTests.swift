@@ -75,7 +75,7 @@ final class FloatingMenuAnimatorTests: XCTestCase {
     func testTransformedHitTestingAndReconfigurationWithEmptySlots() throws {
         let layout = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 1, y: 1),
             visible: CGRect(x: 0, y: 0, width: 1000, height: 800), count: 6, buttonWidth: 132))
-        let slots: [RadialNode?] = (0..<6).map { $0 == 1 ? nil : .text(Snippet(title: "文案 \($0)", text: "正文")) }
+        let slots: [RadialNode?] = (0..<6).map { $0 == 1 ? nil : .content(Snippet(title: "文案 \($0)", text: "正文")) }
         let view = FloatingMenuView(frame: .zero)
         view.configure(slots: slots, layout: layout)
         let layer = try XCTUnwrap(view.animationLayer)
@@ -150,7 +150,7 @@ final class FloatingMenuAnimatorTests: XCTestCase {
             model.configure(
                 profile: profile, at: CGPoint(x: 300, y: 300),
                 visible: CGRect(x: 0, y: 0, width: 1000, height: 800)))
-        XCTAssertEqual(model.page?.remaining.compactMap(\.textID), [first.id])
+        XCTAssertEqual(model.page?.remaining.compactMap(\.contentID), [first.id])
         let old = model.beginShow(initialMouse: CGPoint(x: 300, y: 300), requiresMovement: true)
         XCTAssertNil(model.select(at: CGPoint(x: 300, y: 300), hitID: first.id))
         XCTAssertEqual(model.select(at: CGPoint(x: 350, y: 350), hitID: first.id), first.id)

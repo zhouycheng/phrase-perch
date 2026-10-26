@@ -6,6 +6,7 @@ struct RadialLayout {
     let anchor: CGPoint
     let center: CGPoint
     let items: [CGRect]
+    let ringRadius: CGFloat
     static let maximumItems = 8
     static let buttonSize = CGSize(width: 88, height: 40)
 
@@ -18,12 +19,23 @@ struct RadialLayout {
     }
 
     init?(anchor: CGPoint, visible: CGRect, count: Int, buttonWidth: CGFloat = Self.buttonSize.width,
-        pinnedIndex: Int = 0, angle: CGFloat? = nil) {
+        pinnedIndex: Int = 0, angle: CGFloat? = nil, buttonWidths: [CGFloat]? = nil) {
         guard buttonWidth.isFinite, buttonWidth >= Self.buttonSize.width, (1...Self.maximumItems).contains(count),
             anchor.x.isFinite, anchor.y.isFinite, visible.contains(anchor) else { return nil }
         let safe = visible.insetBy(dx: 8.5, dy: 8.5)
-        let ring = CircularButtonLayout.items(count: count,
-            buttonSize: CGSize(width: buttonWidth, height: Self.buttonSize.height), pinnedIndex: pinnedIndex, angle: angle).map {
+        let template: [CGRect]
+        if let buttonWidths {
+            guard buttonWidths.count == count else { return nil }
+            let result = CircularButtonLayout.outwardItems(widths: buttonWidths, height: Self.buttonSize.height,
+                pinnedIndex: pinnedIndex, angle: angle)
+            template = result.items
+            ringRadius = result.radius * 0.95
+        } else {
+            template = CircularButtonLayout.items(count: count,
+                buttonSize: CGSize(width: buttonWidth, height: Self.buttonSize.height), pinnedIndex: pinnedIndex, angle: angle)
+            ringRadius = template.first.map { hypot($0.midX, $0.midY) * 0.95 } ?? 0
+        }
+        let ring = template.map {
                 CGRect(x: $0.minX, y: -$0.maxY, width: $0.width, height: $0.height)
             }
         guard ring.count == count else { return nil }
@@ -46,7 +58,6 @@ struct RadialLayout {
     }
     var localAnchor: CGPoint { CGPoint(x: anchor.x - frame.minX, y: anchor.y - frame.minY) }
     var localCenter: CGPoint { CGPoint(x: center.x - frame.minX, y: center.y - frame.minY) }
-    var ringRadius: CGFloat { hypot(items[0].midX - center.x, items[0].midY - center.y) * 0.95 }
     func itemRect(index: Int) -> CGRect { items[index].offsetBy(dx: -frame.minX, dy: -frame.minY) }
     func selectedIndex(at point: CGPoint) -> Int? {
         items.firstIndex { CGPath(roundedRect: $0, cornerWidth: 12, cornerHeight: 12, transform: nil).contains(point) }

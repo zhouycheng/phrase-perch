@@ -49,12 +49,12 @@ extension AppProfile {
             guard visited.insert(node.id).inserted else { throw InputFailure("分组存在重复引用或循环归属") }
             switch node.kind {
             case .snippet:
-                guard snippets.contains(node.id) else { throw InputFailure("分组引用的文案不存在") }
+                guard snippets.contains(node.id) else { throw InputFailure("分组引用的内容不存在") }
             case .group:
                 guard groupIDs.contains(node.id) else { throw InputFailure("分组引用的子分组不存在") }
                 pending += children(of: node.id)
             }
         }
-        guard visited == snippets.union(groupIDs) else { throw InputFailure("存在未归属的文案或分组") }
+        guard visited == snippets.union(groupIDs) else { throw InputFailure("存在未归属的内容或分组") }
     }
 }

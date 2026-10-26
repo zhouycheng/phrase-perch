@@ -12,6 +12,7 @@ final class StubPasteSystem {
     var clipboardChanged = false
     var canDispatch = true
     var copies: [String] = []
+    var fileCopies: [URL] = []
     var dispatches = 0
     var revision = 0
     var environment: PasteEnvironment {
@@ -20,6 +21,10 @@ final class StubPasteSystem {
             authorized: { self.authorized },
             copy: { text in
                 self.copies.append(text)
+                self.revision += 1
+                return self.revision
+            }, copyFile: { file in
+                self.fileCopies.append(file.url)
                 self.revision += 1
                 return self.revision
             }, clipboardRevision: { self.revision + (self.clipboardChanged ? 1 : 0) },

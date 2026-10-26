@@ -27,6 +27,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     var pageNodes: [RadialNode] { viewModel.page.map { Array($0.remaining.prefix($0.consumed)) } ?? [] }
     private let statusPanel = InteractionStatusPanel()
     let viewModel = FloatingMenuViewModel()
+    var titleCharacterLimit = 10
     private let menuView = FloatingMenuView(frame: .zero)
     private let animator: FloatingMenuAnimator
     var layout: RadialLayout? { viewModel.layout }
@@ -53,7 +54,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         panel.isReleasedWhenClosed = false
         panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.setAccessibilityLabel("径向文案菜单")
+        panel.setAccessibilityLabel("径向快捷内容菜单")
         menuView.onSelect = { [weak self] action in
             guard let self, isPresented, !entering, !changingPage else { return }
             activate(action)
@@ -64,7 +65,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         case .next: enterNextPage()
         case .previous: returnToParent()
         case .group(let id): enterGroup(id)
-        case .text(let id): if interactionMode == .persistent { onSelect?(id) }
+        case .content(let id): if interactionMode == .persistent { onSelect?(id) }
         }
     }
 
@@ -74,7 +75,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     // Also used by the offscreen native rendering check, without opening a window or requiring AX permissions.
     @discardableResult
     func configure(profile: AppProfile, at point: CGPoint, visible: CGRect) -> Bool {
-        guard viewModel.configure(profile: profile, at: point, visible: visible) else { return false }
+        guard viewModel.configure(profile: profile, at: point, visible: visible, characterLimit: titleCharacterLimit) else { return false }
         self.profile = profile
         self.visible = visible
         currentGroup = nil
@@ -90,7 +91,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         menuView.layer?.opacity = 1
         panel.isMovableByWindowBackground = false
         panel.title = "PhrasePerch — 径向菜单"
-        panel.setAccessibilityLabel("径向文案菜单")
+        panel.setAccessibilityLabel("径向快捷内容菜单")
         render()
         return true
     }
@@ -162,7 +163,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         let nodeCenter = CGPoint(x: item.midX, y: item.midY)
         guard viewModel.configure(nodes: nodes, at: nodeCenter, visible: visible,
             hasPrevious: true, previousAngle: atan2(content.layout.center.x - nodeCenter.x,
-                content.layout.center.y - nodeCenter.y)) else {
+                content.layout.center.y - nodeCenter.y), characterLimit: titleCharacterLimit) else {
             cancelHover()
             showStatus(viewModel.failureMessage, at: NSEvent.mouseLocation)
             return
@@ -187,7 +188,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         let local = CGPoint(x: screenPoint.x - layout.frame.minX, y: screenPoint.y - layout.frame.minY)
         let index = menuView.interactiveIndex(local)
         let node = index.flatMap { menuView.node(at: $0) }
-        _ = viewModel.select(at: screenPoint, hitID: node?.textID)
+        _ = viewModel.select(at: screenPoint, hitID: node?.contentID)
         menuView.showSelection(viewModel.acceptsHover ? index : nil)
         let navigation = viewModel.acceptsHover && node?.isNavigation == true ? node?.action : nil
         scheduleHover(entering ? nil : navigation)
@@ -277,7 +278,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         guard let layout else { return }
         panel.setFrame(layout.frame, display: false)
         menuView.allowsClick = interactionMode == .persistent
-        menuView.configure(slots: viewModel.page?.slots ?? [], layout: layout)
+        menuView.configure(slots: viewModel.page?.slots ?? [], layout: layout, titles: viewModel.page?.titles)
         panel.contentView = menuView
     }
     @objc private func dismiss() { if isPresented { onDismiss?() } }

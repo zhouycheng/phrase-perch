@@ -8,6 +8,15 @@ final class ConfigurationRepository {
             updateValidation()
             scheduleSave()
             notifyObservers()
+            let removed = Set(oldValue.attachments.map(\.id)).subtracting(configuration.attachments.map(\.id))
+            if !removed.isEmpty {
+                Task {
+                    for id in removed where !configuration.attachments.contains(where: { $0.id == id }) {
+                        await disk.abandonAttachment(id)
+                    }
+                    await cleanupAttachments()
+                }
+            }
         }
     }
     @ObservationIgnored private var observers: [UUID: () -> Void] = [:]
@@ -27,6 +36,7 @@ final class ConfigurationRepository {
         return savedRevision == revision ? "已保存" : "正在保存…"
     }
     private let disk: any ConfigurationStorage
+    @ObservationIgnored var clipboardFileURLs: () -> [URL] = { [] }
     private var saveTask: Task<Void, Never>?
     private var loading = true
 
@@ -68,6 +78,7 @@ final class ConfigurationRepository {
             clearIssues()
         } catch { report(.load, message: "配置读取失败，原文件已保留：\(error.localizedDescription)") }
         loading = false
+        if isReady { await cleanupAttachments() }
     }
 
     func retryLoad() async {
@@ -112,6 +123,7 @@ final class ConfigurationRepository {
                 try Task.checkCancellation()
                 try await disk.save(value)
                 didSave(capturedRevision)
+                await cleanupAttachments()
             } catch is CancellationError {} catch {
                 guard capturedRevision == revision else { return }
                 report(.save, message: "保存失败，草稿仍在内存中：\(error.localizedDescription)")
@@ -126,6 +138,7 @@ final class ConfigurationRepository {
         do {
             try await disk.save(configuration)
             didSave(capturedRevision)
+            await cleanupAttachments()
             return capturedRevision == revision
         } catch {
             if capturedRevision == revision { report(.save, message: "保存失败：\(error.localizedDescription)") }
@@ -151,22 +164,49 @@ final class ConfigurationRepository {
         }
     }
 
-    func readImport(_ url: URL) async throws -> AppConfiguration {
-        let data = try await Task.detached { try Data(contentsOf: url) }.value
-        return try await disk.decode(data)
+    func readImport(_ url: URL) async throws -> ConfigurationImport {
+        try await disk.readImport(url)
+    }
+    func discardImport(_ prepared: ConfigurationImport) async { await disk.discardImport(prepared) }
+    func importAttachment(from url: URL) async throws -> AttachmentReference { try await disk.importAttachment(from: url) }
+    func attachmentURL(_ file: AttachmentReference) async throws -> URL { try await disk.attachmentURL(file) }
+    func retainAttachment(_ file: AttachmentReference) async throws -> URL { try await disk.retainAttachment(file) }
+    func releaseAttachment(_ id: UUID) async { await disk.releaseAttachment(id) }
+    func abandonAttachment(_ id: UUID) async {
+        await disk.abandonAttachment(id)
+        await cleanupAttachments()
+    }
+    func cleanupAttachments() async {
+        await disk.pruneAttachments(retaining: Set(configuration.attachments.map(\.id)), clipboardURLs: clipboardFileURLs())
+    }
+    func replace(with prepared: ConfigurationImport) async {
+        saveTask?.cancel()
+        do {
+            try await disk.commitImport(prepared)
+            acceptReplacement(prepared.configuration)
+            await cleanupAttachments()
+        } catch {
+            await disk.discardImport(prepared)
+            report(.importFile, message: "导入失败，现有配置保留：\(error.localizedDescription)")
+            if isReady, revision != savedRevision { scheduleSave() }
+        }
+    }
+    private func acceptReplacement(_ config: AppConfiguration) {
+        loading = true
+        configuration = config
+        loading = false
+        isReady = true
+        revision += 1
+        savedRevision = revision
+        clearIssues()
     }
 
     func replace(with config: AppConfiguration) async {
         saveTask?.cancel()
         do {
             try await disk.save(config)
-            loading = true
-            configuration = config
-            loading = false
-            isReady = true
-            revision += 1
-            savedRevision = revision
-            clearIssues()
+            acceptReplacement(config)
+            await cleanupAttachments()
         } catch {
             report(.importFile, message: "导入失败，现有配置保留：\(error.localizedDescription)")
             if isReady, revision != savedRevision { scheduleSave() }
@@ -178,11 +218,7 @@ final class ConfigurationRepository {
         let value = configuration
         do {
             try value.validate()
-            try await Task.detached {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                try encoder.encode(value).write(to: url, options: .atomic)
-            }.value
+            try await disk.export(value, to: url)
             if operationIssue?.operation == .exportFile { operationIssue = nil }
         } catch { report(.exportFile, message: error.localizedDescription) }
     }

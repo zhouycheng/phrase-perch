@@ -4,14 +4,14 @@ import XCTest
 
 @testable import PhrasePerch
 
-final class TextInsertionServiceTests: PresentationTestCase {
+final class ContentInsertionServiceTests: PresentationTestCase {
     @MainActor
     func testDelayedReadbackAndPartialInsertionNeverResend() async {
         let text = "中文 👩🏽‍💻\n第二行"
         for complete in [true, false] {
             let worker = StubInputWorker()
             let system = StubPasteSystem()
-            let service = TextInsertionService(worker: worker, environment: system.environment)
+            let service = ContentInsertionService(worker: worker, environment: system.environment)
             let token = UUID()
             let target = NSRunningApplication.current
             await worker.setReadback(
@@ -32,7 +32,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
     func testReadbackBudgetDiscardsLateSuccess() async {
         let worker = StubInputWorker()
         let system = StubPasteSystem()
-        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let service = ContentInsertionService(worker: worker, environment: system.environment)
         let token = UUID()
         let target = NSRunningApplication.current
         await worker.setReadback(before: "", selection: NSRange(location: 0, length: 0),
@@ -52,7 +52,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
     func testCancellationAfterDispatchReportsUncertainResultOnce() async {
         let worker = StubInputWorker()
         let system = StubPasteSystem()
-        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let service = ContentInsertionService(worker: worker, environment: system.environment)
         let token = UUID()
         let target = NSRunningApplication.current
         await worker.setReadback(before: "", selection: NSRange(location: 0, length: 0), readings: [""])
@@ -69,7 +69,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
     func testCapturedTargetCannotBeReplacedAtReleaseOrUsedTwice() async {
         let worker = StubInputWorker()
         let system = StubPasteSystem()
-        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let service = ContentInsertionService(worker: worker, environment: system.environment)
         let original = UUID()
         let replacement = UUID()
         let target = NSRunningApplication.current
@@ -96,7 +96,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
         for failure in ["application", "editor", "selection", "readonly", "permission", "modifier"] {
             let worker = StubInputWorker()
             let system = StubPasteSystem()
-            let service = TextInsertionService(worker: worker, environment: system.environment)
+            let service = ContentInsertionService(worker: worker, environment: system.environment)
             let token = UUID()
             let target = NSRunningApplication.current
             _ = await service.captureTarget(
@@ -121,7 +121,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
         for changedClipboard in [false, true] {
             let worker = StubInputWorker()
             let system = StubPasteSystem()
-            let service = TextInsertionService(worker: worker, environment: system.environment)
+            let service = ContentInsertionService(worker: worker, environment: system.environment)
             let token = UUID()
             let target = NSRunningApplication.current
             _ = await service.captureTarget(
@@ -140,7 +140,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
     func testCancellationDuringPreparationAndConcurrentInsert() async {
         let worker = StubInputWorker()
         let system = StubPasteSystem()
-        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let service = ContentInsertionService(worker: worker, environment: system.environment)
         let token = UUID()
         let target = NSRunningApplication.current
         _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
@@ -163,7 +163,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
         let worker = StubInputWorker()
         let system = StubPasteSystem()
         system.canDispatch = false
-        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let service = ContentInsertionService(worker: worker, environment: system.environment)
         let token = UUID()
         let target = NSRunningApplication.current
         _ = await service.captureTarget(id: token, pid: target.processIdentifier, mouse: .zero, primaryScreenTop: 900)
@@ -188,7 +188,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
         defer { controller.hide() }
         let worker = StubInputWorker()
         let system = StubPasteSystem()
-        let service = TextInsertionService(worker: worker, environment: system.environment)
+        let service = ContentInsertionService(worker: worker, environment: system.environment)
         let target = NSRunningApplication.current
         var session = HoldMenuSession()
         for iteration in 0..<40 {
@@ -228,7 +228,7 @@ final class TextInsertionServiceTests: PresentationTestCase {
     @MainActor
     func testCaptureModeAndTargetSnapshotPassThrough() async throws {
         let worker = StubInputWorker()
-        let service = TextInsertionService(worker: worker, environment: StubPasteSystem().environment)
+        let service = ContentInsertionService(worker: worker, environment: StubPasteSystem().environment)
         for mode in MenuAnchorMode.allCases {
             let token = UUID()
             let result = await service.captureTarget(

@@ -218,7 +218,7 @@ final class ConfigurationRepositoryTests: PresentationTestCase {
         XCTAssertEqual(recoveryStore.saveStatus, "已保存")
         let disk = JSONConfigurationStorage(directory: directory)
         let recovered = try await disk.load()
-        XCTAssertEqual(recovered.schemaVersion, 1)
+        XCTAssertEqual(recovered.schemaVersion, 2)
         let retained = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.lastPathComponent.hasPrefix("damaged-") }
         XCTAssertEqual(retained.count, 1)
@@ -235,7 +235,7 @@ final class ConfigurationRepositoryTests: PresentationTestCase {
         XCTAssertTrue(saved)
         await store.replace(with: AppConfiguration(schemaVersion: 999))
         XCTAssertEqual(store.issue?.operation, .importFile)
-        XCTAssertEqual(store.configuration.schemaVersion, 1)
+        XCTAssertEqual(store.configuration.schemaVersion, 2)
         XCTAssertEqual(store.saveStatus, "已保存")
         await store.export(to: directory.appendingPathComponent("missing/export.json"))
         XCTAssertEqual(store.issue?.operation, .exportFile)

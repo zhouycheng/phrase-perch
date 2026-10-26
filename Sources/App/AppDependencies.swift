@@ -4,7 +4,7 @@ import Foundation
 final class AppDependencies {
     let repository: ConfigurationRepository
     let editing: ProfileEditingService
-    let input: TextInsertionService
+    let input: ContentInsertionService
     let floatingMenu: FloatingMenuWindowController
     let authorizationGuide: AuthorizationGuideWindowController
     let authorization: AuthorizationService
@@ -23,8 +23,10 @@ final class AppDependencies {
     ) {
         let repository = repository ?? ConfigurationRepository(initialConfiguration: ApplicationCatalog.initialConfiguration())
         self.repository = repository
+        repository.clipboardFileURLs = { ClipboardService.fileURLs() }
         editing = ProfileEditingService(repository: repository)
-        input = TextInsertionService()
+        input = ContentInsertionService(retainAttachment: { try await repository.retainAttachment($0) },
+            releaseAttachment: { await repository.releaseAttachment($0) })
         floatingMenu = FloatingMenuWindowController()
         authorizationGuide = AuthorizationGuideWindowController()
         authorization = AuthorizationService(

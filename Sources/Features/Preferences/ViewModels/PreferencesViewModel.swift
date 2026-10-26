@@ -27,6 +27,7 @@ final class PreferencesViewModel {
         self.shortcutState = shortcutState
     }
     var isReady: Bool { repository.isReady }
+    var isImporting: Bool { files.isImporting }
     var issue: ConfigurationIssue? { repository.issue }
     var validationMessage: String? { repository.validationMessage }
     var enabled: Bool {
@@ -44,6 +45,10 @@ final class PreferencesViewModel {
     var menuAnchorMode: MenuAnchorMode {
         get { repository.configuration.preferences.menuAnchorMode }
         set { service.update { $0.menuAnchorMode = newValue } }
+    }
+    var menuTitleCharacterLimit: Int {
+        get { repository.configuration.preferences.menuTitleCharacterLimit }
+        set { service.update { $0.menuTitleCharacterLimit = min(30, max(1, newValue)) } }
     }
     var authorizationStep: AuthorizationFlow.Step { authorization.authorizationStep }
     var authorizationDetail: String { authorization.authorizationDetail }

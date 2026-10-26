@@ -6,6 +6,8 @@ struct SnippetToolbarView: View {
     let toggleShortcut: () -> Void
     let addSnippet: () -> Void
     let addGroup: () -> Void
+    var addAttachments: () -> Void = {}
+    var importingAttachment = false
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -21,6 +23,7 @@ struct SnippetToolbarView: View {
                 Text("快捷内容").font(.body)
                 buttonLayout(stacked: stacked) {
                     headerButton("新建文案", symbol: "plus", action: addSnippet)
+                    headerButton("添加附件", symbol: "paperclip", action: addAttachments).disabled(importingAttachment)
                     headerButton("新建分组", symbol: "folder.badge.plus", action: addGroup)
                 }
                 .fixedSize()

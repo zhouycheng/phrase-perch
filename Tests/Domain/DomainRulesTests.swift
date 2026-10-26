@@ -225,8 +225,8 @@ final class DomainRulesTests: PresentationTestCase {
         let font = NSFont.systemFont(ofSize: snippetTitleFontSize, weight: .medium)
         for title in ["请检查并解释这段代码", "请检查并解释这段代码实现", String(repeating: "👩‍💻", count: 11)] {
             let visible = floatingButtonTitle(title)
-            XCTAssertTrue(visible.hasSuffix("…"))
-            XCTAssertLessThanOrEqual((visible as NSString).size(withAttributes: [.font: font]).width, 112)
+            XCTAssertEqual(visible, String(title.prefix(10)) + (title.count > 10 ? "…" : ""))
+            XCTAssertLessThanOrEqual((visible as NSString).size(withAttributes: [.font: font]).width, snippetButtonWidth(for: [title]) - 20)
         }
     }
 

@@ -26,7 +26,7 @@ final class FloatingMenuTests: PresentationTestCase {
             displayName: "Preview", buttons: titles.prefix(6).map { Snippet(title: $0, text: "正文") })
         XCTAssertTrue(controller.configure(profile: profile, at: CGPoint(x: 500, y: 400), visible: CGRect(x: 0, y: 0, width: 1000, height: 800)))
         let root = try XCTUnwrap(controller.panel.contentView as? FloatingMenuView)
-        XCTAssertEqual(root.buttons.map(\.title), Array(titles.prefix(6)).map(floatingButtonTitle))
+        XCTAssertEqual(root.buttons.map(\.title), Array(titles.prefix(6)).map { floatingButtonTitle($0) })
         try savePreview(root, name: "radial-single-line-titles.png")
         (root.buttons[4] as? FloatingMenuButton)?.selected = true
         try savePreview(root, name: "radial-single-line-titles-selected.png")

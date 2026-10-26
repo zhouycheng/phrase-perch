@@ -5,6 +5,7 @@ final class FloatingMenuButton: NonactivatingButton {
     var selected = false { didSet { needsDisplay = true } }
     var emphasized = false { didSet { needsDisplay = true } }
     var allowsClick = false
+    var symbolName: String?
     override func mouseDown(with event: NSEvent) {
         if allowsClick { super.mouseDown(with: event) }
     }
@@ -31,8 +32,15 @@ final class FloatingMenuButton: NonactivatingButton {
             .paragraphStyle: paragraph,
         ]
         let size = (title as NSString).size(withAttributes: attributes)
+        let iconWidth: CGFloat = symbolName == nil ? 0 : 20
+        let left = max(10, (bounds.width - size.width - iconWidth) / 2)
+        if let symbolName, let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(paletteColors: [.white])) {
+            image.draw(in: CGRect(x: left, y: (bounds.height - 13) / 2, width: 13, height: 13))
+        }
         (title as NSString).draw(
-            in: CGRect(x: 10, y: (bounds.height - size.height) / 2, width: bounds.width - 20, height: size.height),
+            in: CGRect(x: left + iconWidth, y: (bounds.height - size.height) / 2,
+                width: min(size.width, bounds.width - left - iconWidth - 10), height: size.height),
             withAttributes: attributes)
     }
 }

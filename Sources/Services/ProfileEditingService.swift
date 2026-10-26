@@ -46,6 +46,33 @@ final class ProfileEditingService {
         return created
     }
 
+    func addAttachment(from url: URL, to profileID: UUID, group: UUID? = nil) async throws -> UUID {
+        guard repository.isReady else { throw InputFailure("配置尚未就绪") }
+        let file = try await repository.importAttachment(from: url)
+        guard let profile = repository.configuration.profiles.first(where: { $0.id == profileID }),
+            group == nil || profile.groups.contains(where: { $0.id == group }) else {
+            await repository.abandonAttachment(file.id)
+            throw InputFailure("目标应用或分组已移除")
+        }
+        let snippet = Snippet(title: file.fileName, content: .attachment(file))
+        editProfile(profileID) { profile in
+            profile.buttons.append(snippet)
+            profile.setChildren(profile.children(of: group) + [MenuNode(kind: .snippet, id: snippet.id)], of: group)
+        }
+        return snippet.id
+    }
+
+    func replaceAttachment(_ id: UUID, in profileID: UUID, from url: URL) async throws {
+        guard repository.isReady else { throw InputFailure("配置尚未就绪") }
+        let file = try await repository.importAttachment(from: url)
+        guard repository.configuration.profiles.first(where: { $0.id == profileID })?.buttons
+            .contains(where: { $0.id == id && $0.attachment != nil }) == true else {
+            await repository.abandonAttachment(file.id)
+            throw InputFailure("附件条目已移除")
+        }
+        editSnippet(profileID: profileID, snippetID: id) { $0.content = .attachment(file) }
+    }
+
     func duplicateSnippet(_ id: UUID, in profileID: UUID) -> UUID? {
         var created: UUID?
         editProfile(profileID) { profile in

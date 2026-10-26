@@ -6,6 +6,7 @@ final class StubFloatingMenu: FloatingMenuPresenting {
     var onDismiss: (() -> Void)?
     var onSelect: ((UUID) -> Void)?
     var interactionMode = MenuInteractionMode.hold
+    var titleCharacterLimit = 10
     var isPresented = false
     var frame = CGRect(x: 0, y: 0, width: 300, height: 300)
     var failureMessage = ""

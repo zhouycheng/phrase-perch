@@ -2,11 +2,11 @@ import CoreGraphics
 import Foundation
 
 struct AppConfiguration: Codable, Equatable, Sendable {
-    var schemaVersion = 1
+    var schemaVersion = 2
     var profiles: [AppProfile] = []
     var preferences = Preferences()
 
-    init(schemaVersion: Int = 1, profiles: [AppProfile] = [], preferences: Preferences = Preferences()) {
+    init(schemaVersion: Int = 2, profiles: [AppProfile] = [], preferences: Preferences = Preferences()) {
         self.schemaVersion = schemaVersion
         self.profiles = profiles
         self.preferences = preferences
@@ -17,14 +17,20 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let version = try values.decode(Int.self, forKey: .schemaVersion)
-        guard version == 1 else { throw InputFailure("不支持配置版本 \(version)") }
-        schemaVersion = version
+        guard (1...2).contains(version) else { throw InputFailure("不支持配置版本 \(version)") }
+        schemaVersion = 2
         profiles = try values.decode([AppProfile].self, forKey: .profiles)
         preferences = try values.decode(Preferences.self, forKey: .preferences)
     }
 
     func validate() throws {
-        guard schemaVersion == 1 else { throw InputFailure("不支持配置版本 \(schemaVersion)") }
+        guard schemaVersion == 2 else { throw InputFailure("不支持配置版本 \(schemaVersion)") }
+        guard (1...30).contains(preferences.menuTitleCharacterLimit) else { throw InputFailure("标题显示字数应为 1–30") }
+        var assets: [UUID: AttachmentReference] = [:]
+        for file in attachments {
+            if let existing = assets[file.id], existing != file { throw InputFailure("附件资源信息冲突") }
+            assets[file.id] = file
+        }
         var identities = Set<String>()
         var ids = Set<UUID>()
         for profile in profiles {
@@ -49,4 +55,5 @@ struct AppConfiguration: Codable, Equatable, Sendable {
             }
         }
     }
+    var attachments: [AttachmentReference] { profiles.flatMap(\.buttons).compactMap(\.attachment) }
 }

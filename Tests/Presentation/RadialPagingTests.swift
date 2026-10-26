@@ -44,7 +44,7 @@ final class RadialPagingTests: PresentationTestCase {
         for direction in 0..<8 {
             let angle = CGFloat(direction) * .pi / 4
             for count in [1, 2, 3, 4, 5, 6, 7, 8, 31] {
-                let nodes = (0..<count).map { RadialNode.text(Snippet(title: "文案 \($0)", text: "正文")) }
+                let nodes = (0..<count).map { RadialNode.content(Snippet(title: "文案 \($0)", text: "正文")) }
                 for anchor in [CGPoint(x: screen.minX + 1, y: screen.minY + 1),
                     CGPoint(x: screen.maxX - 1, y: screen.maxY - 1)] {
                     let page = try XCTUnwrap(RadialPage(nodes: nodes, anchor: anchor,
@@ -80,7 +80,7 @@ final class RadialPagingTests: PresentationTestCase {
     }
     func testRelocatingHistoryPreservesContentAndFitsScreenCorners() throws {
         let screen = CGRect(x: -1400, y: -300, width: 1400, height: 900)
-        let nodes = (0..<31).map { RadialNode.text(Snippet(title: "文案 \($0)", text: "正文")) }
+        let nodes = (0..<31).map { RadialNode.content(Snippet(title: "文案 \($0)", text: "正文")) }
         let original = try XCTUnwrap(RadialPage(nodes: nodes,
             anchor: CGPoint(x: screen.midX, y: screen.midY), visible: screen, hasPrevious: true))
         for x in [screen.minX + 1, screen.midX, screen.maxX - 1] {
@@ -103,7 +103,7 @@ final class RadialPagingTests: PresentationTestCase {
     @MainActor
     func testPreviousAndNextAreOppositeInNodeCenteredPages() throws {
         for count in [2, 7, 8, 9, 31, 512] {
-            let nodes = (0..<count).map { RadialNode.text(Snippet(title: "文案 \($0)", text: "正文")) }
+            let nodes = (0..<count).map { RadialNode.content(Snippet(title: "文案 \($0)", text: "正文")) }
             for visible in [CGRect(x: 0, y: 0, width: 1400, height: 900),
                 CGRect(x: -800, y: -300, width: 320, height: 240)] {
                 let page = try XCTUnwrap(RadialPage(nodes: nodes,
@@ -117,7 +117,7 @@ final class RadialPagingTests: PresentationTestCase {
                 XCTAssertGreaterThan(next.midY, center.y)
                 XCTAssertEqual(next.midX + previous.midX, center.x * 2, accuracy: 0.001)
                 XCTAssertEqual(next.midY + previous.midY, center.y * 2, accuracy: 0.001)
-                XCTAssertEqual(page.slots.compactMap { $0?.textID }, Array(nodes.prefix(page.consumed)).compactMap(\.textID))
+                XCTAssertEqual(page.slots.compactMap { $0?.contentID }, Array(nodes.prefix(page.consumed)).compactMap(\.contentID))
                 if count == 31 && visible.width == 1400 {
                     let view = FloatingMenuView(frame: .zero)
                     view.configure(slots: page.slots, layout: page.layout)
@@ -130,7 +130,7 @@ final class RadialPagingTests: PresentationTestCase {
     @MainActor
     func testTriangleDiamondAndAllNodeCountPreviews() throws {
         for count in 1...8 {
-            let nodes = (0..<count).map { RadialNode.text(Snippet(title: "文案 \($0 + 1)", text: "正文")) }
+            let nodes = (0..<count).map { RadialNode.content(Snippet(title: "文案 \($0 + 1)", text: "正文")) }
             let page = try XCTUnwrap(RadialPage(nodes: nodes, anchor: CGPoint(x: 400, y: 300),
                 visible: CGRect(x: 0, y: 0, width: 800, height: 600)))
             let center = page.layout.center, items = page.layout.items
@@ -187,12 +187,12 @@ final class RadialPagingTests: PresentationTestCase {
             visible: CGRect(x: 0, y: 0, width: 1200, height: 900), count: 6))
         let view = FloatingMenuView(frame: .zero)
         var chosen: UUID?
-        view.onSelect = { if case .text(let id) = $0 { chosen = id } }
-        view.configure(slots: snippets.map { RadialNode.text($0) }, layout: layout)
+        view.onSelect = { if case .content(let id) = $0 { chosen = id } }
+        view.configure(slots: snippets.map { RadialNode.content($0) }, layout: layout)
         XCTAssertFalse(view.buttons[0].accessibilityPerformPress())
         XCTAssertNil(chosen)
         view.allowsClick = true
-        view.configure(slots: snippets.map { RadialNode.text($0) }, layout: layout)
+        view.configure(slots: snippets.map { RadialNode.content($0) }, layout: layout)
         XCTAssertTrue(view.buttons[0].accessibilityPerformPress())
         XCTAssertEqual(chosen, snippets[0].id)
         XCTAssertEqual(view.buttons[5].accessibilityLabel(), snippets[5].title)
@@ -210,7 +210,7 @@ final class RadialPagingTests: PresentationTestCase {
             visible: CGRect(x: 0, y: 0, width: 1400, height: 900)))
         _ = controller.viewModel.beginShow(initialMouse: .zero, requiresMovement: false)
         let root = try XCTUnwrap(controller.viewModel.page)
-        var ids = controller.pageNodes.compactMap(\.textID)
+        var ids = controller.pageNodes.compactMap(\.contentID)
         var steps = 0
         while controller.hasNextPage, steps < 30 {
             let previous = try XCTUnwrap(controller.layout)
@@ -232,7 +232,7 @@ final class RadialPagingTests: PresentationTestCase {
             let scale = hypot(incoming.x, incoming.y) * hypot(outgoing.x, outgoing.y)
             XCTAssertEqual((incoming.x * outgoing.x + incoming.y * outgoing.y) / scale, -1, accuracy: 0.001)
             XCTAssertNil(controller.updateSelection(at: NSEvent.mouseLocation))
-            ids += controller.pageNodes.compactMap(\.textID)
+            ids += controller.pageNodes.compactMap(\.contentID)
             steps += 1
         }
         XCTAssertEqual(ids, snippets.map(\.id))

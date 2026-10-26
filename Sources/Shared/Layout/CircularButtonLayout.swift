@@ -3,6 +3,38 @@ import CoreGraphics
 enum CircularButtonLayout {
     static let cornerRadius: CGFloat = 12
 
+    static func outwardItems(widths: [CGFloat], height: CGFloat, pinnedIndex: Int = 0,
+        angle: CGFloat? = nil) -> (items: [CGRect], radius: CGFloat) {
+        guard widths.allSatisfy({ $0.isFinite && $0 >= 88 }) else { return ([], 0) }
+        let base = items(count: widths.count, buttonSize: CGSize(width: 88, height: height), pinnedIndex: pinnedIndex, angle: angle)
+        guard let first = base.first else { return ([], 0) }
+        let initial = hypot(first.midX, first.midY)
+        func template(_ radius: CGFloat) -> [CGRect] {
+            zip(base, widths).map { rect, width in
+                let x = rect.midX * radius / initial, y = rect.midY * radius / initial
+                let left = abs(rect.midX) < 0.0001 ? x - width / 2 : (rect.midX > 0 ? x - 44 : x + 44 - width)
+                return CGRect(x: left, y: y - height / 2, width: width, height: height)
+            }
+        }
+        func fits(_ rects: [CGRect]) -> Bool {
+            !rects.contains { $0.intersects(CGRect(x: -24, y: -24, width: 48, height: 48)) }
+                && !rects.enumerated().contains { index, rect in
+                    rects.dropFirst(index + 1).contains { edgeGap(rect, $0) < 12.0001 }
+                }
+        }
+        if fits(template(initial)) { return (template(initial), initial) }
+        var low = initial, high = initial * 2
+        while !fits(template(high)) {
+            high *= 2
+            guard high.isFinite else { return ([], 0) }
+        }
+        for _ in 0..<24 {
+            let middle = (low + high) / 2
+            if fits(template(middle)) { high = middle } else { low = middle }
+        }
+        return (template(high), high)
+    }
+
     static func edgeGap(_ first: CGRect, _ second: CGRect) -> CGFloat {
         let dx = max(0, abs(first.midX - second.midX) - (first.width + second.width) / 2 + 2 * cornerRadius)
         let dy = max(0, abs(first.midY - second.midY) - (first.height + second.height) / 2 + 2 * cornerRadius)

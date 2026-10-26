@@ -5,6 +5,9 @@ actor JSONConfigurationStorage: ConfigurationStorage {
     let directory: URL
     var file: URL { directory.appendingPathComponent("configuration.json") }
     private let initialConfiguration: AppConfiguration
+    var uncommittedAttachments = Set<UUID>()
+    var attachmentLeases: [UUID: Int] = [:]
+    var pendingImports: [UUID: AppConfiguration] = [:]
     init(directory: URL, initialConfiguration: AppConfiguration = AppConfiguration()) {
         self.directory = directory
         self.initialConfiguration = initialConfiguration
@@ -17,11 +20,19 @@ actor JSONConfigurationStorage: ConfigurationStorage {
         return config
     }
     func load() throws -> AppConfiguration {
+        if pendingImports.isEmpty {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(".imports", isDirectory: true))
+        }
         guard FileManager.default.fileExists(atPath: file.path) else {
             try save(initialConfiguration)
             return initialConfiguration
         }
-        return try decode(Data(contentsOf: file))
+        let data = try Data(contentsOf: file)
+        let config = try decode(data)
+        if (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["schemaVersion"] as? Int == 1 {
+            try save(config)
+        }
+        return config
     }
     func backups() throws -> [URL] {
         guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
@@ -48,6 +59,7 @@ actor JSONConfigurationStorage: ConfigurationStorage {
             try old.write(to: directory.appendingPathComponent(name), options: .atomic)
         }
         try data.write(to: file, options: .atomic)
+        uncommittedAttachments.subtract(config.attachments.map(\.id))
         // Backup cleanup failure does not change the outcome of a committed save.
         if let files = try? backups() { for url in files.dropFirst(3) { try? FileManager.default.removeItem(at: url) } }
     }

@@ -57,7 +57,8 @@ final class MainWindowViewModel {
         for id in Array(editors.keys) where !ids.contains(id) { editors.removeValue(forKey: id)?.stop() }
         for id in ids where editors[id] == nil {
             let editor = ProfileEditorViewModel(
-                profileID: id, repository: repository, editing: editing)
+                profileID: id, repository: repository, editing: editing,
+                chooseAttachments: { [files] in files.chooseAttachments(multiple: $0) })
             editor.onOpenConfiguration = { [weak self] in self?.openConfiguration() }
             editors[id] = editor
         }

@@ -8,18 +8,20 @@ struct ConfigurationPreferencesCardView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Button("导入配置…", action: viewModel.importConfiguration)
+                        .disabled(viewModel.isImporting)
                     Button("导出配置…", action: viewModel.exportConfiguration)
                         .disabled(!viewModel.isReady)
                     Spacer()
                     SettingsExplanationView(text: "配置保存在本机")
                 }
+                SettingsExplanationView(text: "备份包包含配置与附件副本，导入时替换现有配置；也可导入旧 JSON。")
                 if let issue = viewModel.issue {
                     Divider()
                     Text(issue.operation.rawValue).font(.callout.weight(.medium))
                     Text(issue.message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 if let message = viewModel.validationMessage {
-                    SettingsExplanationView(text: "待补全文案：\(message)。补齐后会自动保存。")
+                    SettingsExplanationView(text: "待补全内容：\(message)。补齐后会自动保存。")
                 }
                 HStack(spacing: 10) {
                     if !viewModel.isReady, viewModel.issue != nil {

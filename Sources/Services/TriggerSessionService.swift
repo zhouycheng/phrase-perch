@@ -4,7 +4,7 @@ import KeyboardShortcuts
 @MainActor
 final class TriggerSessionService {
     let store: ConfigurationRepository
-    private let input: TextInsertionService
+    private let input: ContentInsertionService
     private let floating: any FloatingMenuPresenting
     private let authorization: AuthorizationService
     private let monitor: any TriggerEventSource
@@ -26,7 +26,7 @@ final class TriggerSessionService {
     }
 
     init(
-        store: ConfigurationRepository, input: TextInsertionService, floating: any FloatingMenuPresenting,
+        store: ConfigurationRepository, input: ContentInsertionService, floating: any FloatingMenuPresenting,
         authorization: AuthorizationService, monitor: any TriggerEventSource, entry: AppEntryService,
         diagnostics: InteractionDiagnostics = InteractionDiagnostics(), environment: TriggerEnvironment = TriggerEnvironment()
     ) {
@@ -163,6 +163,7 @@ final class TriggerSessionService {
                 let anchor = MenuAnchor(mode: mode, mouse: mouse, caretBounds: captured.caretBounds,
                     primaryScreenTop: top, screens: screens, editorBounds: captured.editorBounds)
                 floating.interactionMode = source == .shortcut ? .persistent : .hold
+                floating.titleCharacterLimit = store.configuration.preferences.menuTitleCharacterLimit
                 guard hold.show(token), floating.show(profile: profile, at: anchor.point,
                     initialMouse: mouse, requiresMovement: true) else {
                     invalidate(reason: floating.failureMessage)
@@ -176,7 +177,7 @@ final class TriggerSessionService {
                 let canInsert = copyOnInsert ? captured.canPaste : captured.canDirectWrite
                 let directUnsupported = !copyOnInsert && captured.focusKind == .editable && !captured.canDirectWrite
                 let detail = directUnsupported ? "当前输入框不支持直接写入，可在设置中开启粘贴插入"
-                    : (canInsert || captured.focusKind == .nonInput ? anchor.detail : "复制模式：输入位置未能确认，选中文案后复制。")
+                    : (canInsert || captured.focusKind == .nonInput ? anchor.detail : "复制模式：输入位置未能确认，选中内容后复制。")
                 let stage = directUnsupported ? "直接写入不可用" : (canInsert ? (copyOnInsert ? "等待粘贴选择" : "等待直接写入选择") : "仅复制")
                 diagnostics.record(token, stage: stage, detail: detail,
                     anchor: origin, screenID: captured.screenID)
@@ -201,7 +202,7 @@ final class TriggerSessionService {
         floating.hide()
         diagnostics.record(token, stage: "等待释放按键")
         holdTask?.cancel()
-        let copyOnInsert = store.configuration.preferences.copyOnInsert
+        let copyOnInsert = snippet.attachment != nil || store.configuration.preferences.copyOnInsert
         let canPaste = copyOnInsert ? snapshot?.canPaste == true : snapshot?.canDirectWrite == true
         if !copyOnInsert, snapshot?.focusKind == .editable, snapshot?.canDirectWrite != true {
             invalidate(reason: "当前输入框不支持直接写入，可在设置中开启粘贴插入")
@@ -227,7 +228,7 @@ final class TriggerSessionService {
                 }
             }
             diagnostics.record(token, stage: canPaste ? (copyOnInsert ? "粘贴插入" : "直接写入") : "正在复制")
-            let result = canPaste ? await input.insert(snippet, target: target, sessionID: token, copyOnInsert: copyOnInsert) : input.copyOnly(snippet)
+            let result = canPaste ? await input.insert(snippet, target: target, sessionID: token, copyOnInsert: copyOnInsert) : await input.copyOnly(snippet)
             Task { await input.releaseTarget(token) }
             diagnostics.record(token, stage: result.message, detail: input.message)
             guard hold.isCurrent(token) else { return }

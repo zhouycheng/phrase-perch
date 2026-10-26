@@ -48,6 +48,6 @@ Use concise Chinese commit summaries: `refactor(content): 重构 UI` or `fix(con
 
 ## Configuration & Agent Guidance
 
-Use the current schema version 1 under `~/Library/Application Support/local.PhrasePerch/`. Fresh installations seed empty Safari and ChatGPT profiles; imported files must use the current format. Test permissions against the actual built application; ad hoc signing can require reauthorization.
+Use schema version 2 under `~/Library/Application Support/local.PhrasePerch/`. Fresh installations seed empty Safari and ChatGPT profiles. Version 1 text configurations migrate automatically; attachment configurations import through complete `.phraseperch` packages. Test permissions against the actual built application; ad hoc signing can require reauthorization.
 
 For repository documentation, apply the `no-negative-echo` skill at `/Users/zhou/.agents/skills/no-negative-echo/SKILL.md`. Describe accepted behavior directly and review headings, filenames, and final text. Preserve existing user changes; commit and push when requested.

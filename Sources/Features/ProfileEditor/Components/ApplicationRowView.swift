@@ -17,7 +17,7 @@ struct ApplicationRowView: View {
                         .resizable().frame(width: 36, height: 36)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(profile.displayName).font(.system(size: 13)).lineLimit(1)
-                        Text("\(profile.buttons.count) 条文案")
+                        Text("\(profile.buttons.count) 项内容")
                             .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .layoutPriority(1)

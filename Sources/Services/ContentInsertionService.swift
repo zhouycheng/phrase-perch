@@ -5,19 +5,25 @@ import OSLog
 import Observation
 
 @MainActor @Observable
-final class TextInsertionService {
+final class ContentInsertionService {
     private(set) var isBusy = false
     private(set) var message = ""
     private(set) var lastResult: InsertionResult?
     private var gate = OperationGate()
     private let worker: any InputTargetWorker
     private let environment: PasteEnvironment
+    private let retainAttachment: @MainActor (AttachmentReference) async throws -> URL
+    private let releaseAttachment: @MainActor (UUID) async -> Void
     private let log = Logger(subsystem: "local.PhrasePerch", category: "input")
 
-    init(worker: any InputTargetWorker = AccessibilityInputWorker(), environment: PasteEnvironment = PasteEnvironment())
+    init(worker: any InputTargetWorker = AccessibilityInputWorker(), environment: PasteEnvironment = PasteEnvironment(),
+        retainAttachment: @escaping @MainActor (AttachmentReference) async throws -> URL = { _ in throw InputFailure("附件存储不可用") },
+        releaseAttachment: @escaping @MainActor (UUID) async -> Void = { _ in })
     {
         self.worker = worker
         self.environment = environment
+        self.retainAttachment = retainAttachment
+        self.releaseAttachment = releaseAttachment
     }
     func cancel() { gate.invalidate() }
     func observeTarget(_ handler: @escaping @Sendable (UUID) -> Void) async {
@@ -39,16 +45,32 @@ final class TextInsertionService {
     }
 
     func focusUnchanged(_ id: UUID) async -> Bool { await worker.focusUnchanged(id) }
-    func copyOnly(_ snippet: Snippet) -> InsertionResult {
+    func copyOnly(_ snippet: Snippet) async -> InsertionResult {
+        guard let id = gate.begin() else { return .notWritten }
+        let generation = gate.generation
+        isBusy = true
+        var leased: UUID?
         do {
             try SnippetValidator.validate(snippet)
-            _ = try environment.copy(snippet.text)
+            if let file = snippet.attachment {
+                let url = try await retainAttachment(file)
+                leased = file.id
+                let payload = try await Task.detached { try ClipboardFile(url: url) }.value
+                guard gate.isCurrent(id, generation: generation), !Task.isCancelled else { throw CancellationError() }
+                _ = try environment.copyFile(payload)
+            } else {
+                guard !Task.isCancelled else { throw CancellationError() }
+                _ = try environment.copy(snippet.text)
+            }
             lastResult = .copied
             message = InsertionResult.copied.message
         } catch {
             lastResult = .notWritten
             message = error.localizedDescription
         }
+        if let leased { await releaseAttachment(leased) }
+        gate.finish(id)
+        isBusy = false
         return lastResult ?? .notWritten
     }
 
@@ -60,6 +82,8 @@ final class TextInsertionService {
         lastResult = nil
         var result = InsertionResult.notWritten
         var clipboardRevision: Int?
+        var leased: UUID?
+        let usesClipboard = snippet.attachment != nil || copyOnInsert
         func current() -> Bool {
             gate.isCurrent(id, generation: generation) && environment.targetIsCurrent(target)
         }
@@ -70,13 +94,23 @@ final class TextInsertionService {
                 throw InputFailure("请松开修饰键后重试")
             }
             guard environment.authorized() else { throw InputFailure("粘贴权限未就绪") }
-            let prepared = try await worker.prepareCaptured(pid: target.processIdentifier, operationID: sessionID)
-            if copyOnInsert {
-                guard current(), await worker.readyToPaste(sessionID), current() else { throw InputFailure("输入焦点或选区已变化") }
-                clipboardRevision = try environment.copy(snippet.text)
+            let prepared = snippet.attachment == nil
+                ? try await worker.prepareCaptured(pid: target.processIdentifier, operationID: sessionID) : PreparedInput()
+            if usesClipboard {
+                var payload: ClipboardFile?
+                if let file = snippet.attachment {
+                    let url = try await retainAttachment(file)
+                    leased = file.id
+                    payload = try await Task.detached { try ClipboardFile(url: url) }.value
+                }
+                guard current(), await worker.readyToPaste(sessionID), current(), environment.authorized(), environment.modifiersReleased()
+                else { throw InputFailure("输入焦点、选区或粘贴条件已变化") }
+                try Task.checkCancellation()
+                clipboardRevision = try payload.map { try environment.copyFile($0) } ?? environment.copy(snippet.text)
                 guard await worker.readyToPaste(sessionID), current(), environment.authorized(),
                     environment.clipboardRevision() == clipboardRevision, environment.modifiersReleased()
                 else { throw InputFailure("粘贴前剪贴板或权限已变化") }
+                try Task.checkCancellation()
                 guard environment.dispatch() else { throw InputFailure("无法创建粘贴事件") }
                 gate.markWriting(id)
             } else {
@@ -89,7 +123,7 @@ final class TextInsertionService {
             }
             result = .dispatchedUnverified
             if !current(), gate.mayHaveMutated { result = .interruptedAfterDispatch }
-            if result == .dispatchedUnverified, let before = prepared.before, let range = prepared.selection,
+            if snippet.attachment == nil, result == .dispatchedUnverified, let before = prepared.before, let range = prepared.selection,
                 range.location <= before.utf16.count, range.length <= before.utf16.count - range.location
             {
                 var partial: InsertionResult?
@@ -116,15 +150,17 @@ final class TextInsertionService {
             }
             message =
                 result == .dispatchedUnverified
-                ? (copyOnInsert ? "文案已复制，粘贴操作已发送；请检查目标应用。" : "写入操作已执行，请检查目标应用。") : result.message
+                ? (snippet.attachment != nil ? "附件已复制，粘贴操作已发送；请检查目标应用。"
+                    : (copyOnInsert ? "文案已复制，粘贴操作已发送；请检查目标应用。" : "写入操作已执行，请检查目标应用。")) : result.message
         } catch {
             result = gate.mayHaveMutated ? .indeterminate : .notWritten
             if !gate.mayHaveMutated, clipboardRevision != nil {
-                message = "未自动粘贴：\(error.localizedDescription)。文案已复制。"
+                message = "未自动粘贴：\(error.localizedDescription)。\(snippet.attachment == nil ? "文案" : "附件")已复制。"
             } else {
                 message = gate.mayHaveMutated ? "\(result.message)（\(error.localizedDescription)）" : error.localizedDescription
             }
         }
+        if let leased { await releaseAttachment(leased) }
         await worker.release(sessionID)
         gate.finish(id)
         isBusy = false
