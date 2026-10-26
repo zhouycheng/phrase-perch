@@ -25,7 +25,12 @@ final class MacAppEntryController: NSObject, AppEntryPlatform {
         if visible {
             guard statusItem == nil else { return }
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            item.button?.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: "PhrasePerch")
+            let image = NSImage(named: "MenuBarIcon")
+                ?? NSImage(systemSymbolName: "text.quote", accessibilityDescription: "PhrasePerch")
+            image?.size = NSSize(width: 22, height: 22)
+            image?.isTemplate = true
+            image?.accessibilityDescription = "PhrasePerch"
+            item.button?.image = image
             let menu = NSMenu()
             menu.addItem(withTitle: "启用／暂停", action: #selector(toggleEnabled), keyEquivalent: "")
             menu.addItem(.separator())
