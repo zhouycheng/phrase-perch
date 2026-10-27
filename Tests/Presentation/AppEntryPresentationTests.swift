@@ -79,12 +79,14 @@ final class AppEntryPresentationTests: PresentationTestCase {
     }
 
     @MainActor
-    func testStartupSettingsAtAllWindowSizes() async throws {
+    func testStartupSettingsAndEmptyDropListAtAllWindowSizes() async throws {
         let suite = "PhrasePerch.Tests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = ConfigurationRepository(storage: StubConfigurationStorage())
         for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(5)) }
+        store.update { $0.profiles = [AppProfile(
+            application: ApplicationIdentity(bundleIdentifier: "test.empty-drop", fallbackBundlePath: nil), displayName: "ChatGPT")] }
         let platform = StubAppEntryPlatform()
         platform.loginEnabled = true
         let coordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: store, defaults: defaults, entryPlatform: platform))
@@ -98,9 +100,10 @@ final class AppEntryPresentationTests: PresentationTestCase {
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(EditorStyle.background).preferredColorScheme(.dark))
+        let content = AnyView(makeMainWindowView(coordinator))
         for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
             CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
-            for (name, view) in [("startup-settings", startupSettings)] {
+            for (name, view) in [("startup-settings", startupSettings), ("empty-drop-list", content)] {
                 let root = NSHostingView(rootView: view)
                 let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false

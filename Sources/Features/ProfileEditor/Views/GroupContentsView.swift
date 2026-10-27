@@ -8,6 +8,7 @@ struct GroupContentsView: View {
     @State private var lastPointer: CGPoint?
     @State private var marqueeAdditive = false
     @State private var cancelledDrag = false
+    @State private var isDropTargeted = false
     @FocusState private var listFocused: Bool
 
     var body: some View {
@@ -47,7 +48,8 @@ struct GroupContentsView: View {
                                     })
                             }
                             if viewModel.nodes.isEmpty {
-                                Text("添加文案、附件或分组").foregroundStyle(.secondary).padding().allowsHitTesting(false)
+                                Text("添加文案、附件或分组，也可拖入文件")
+                                    .foregroundStyle(.secondary).multilineTextAlignment(.center).padding().allowsHitTesting(false)
                             }
                         }
                         .frame(maxWidth: .infinity)
@@ -92,6 +94,18 @@ struct GroupContentsView: View {
                     }
                 }
             }
+            .dropDestination(for: URL.self) { urls, _ in
+                viewModel.addAttachments(from: urls)
+            } isTargeted: { isDropTargeted = $0 }
+            .overlay {
+                if isDropTargeted && !viewModel.isImportingAttachment {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.accentColor.opacity(0.08))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor, lineWidth: 2))
+                        .allowsHitTesting(false)
+                }
+            }
+            .help("将文件拖到列表，按文件名添加附件")
             Text(viewModel.batchIssue ?? viewModel.attachmentMessage ?? viewModel.hierarchyIssue
                 ?? (viewModel.isImportingAttachment ? "正在添加附件…" : viewModel.isBatchSelecting
                     ? "已选 \(viewModel.selectedNodeIDs.count) 项 · \(viewModel.saveStatus)" : viewModel.saveStatus))

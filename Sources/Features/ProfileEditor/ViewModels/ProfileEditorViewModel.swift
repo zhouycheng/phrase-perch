@@ -147,19 +147,28 @@ final class ProfileEditorViewModel {
     func addSnippet() { if let id = editing.addSnippet(to: profileID, group: currentGroup) { select(id) } }
     func addAttachments() {
         guard !isImportingAttachment else { return }
-        let urls = chooseAttachments(true), group = currentGroup
-        guard !urls.isEmpty else { return }
+        addAttachments(from: chooseAttachments(true))
+    }
+    @discardableResult
+    func addAttachments(from urls: [URL]) -> Bool {
+        guard repository.isReady, profile != nil, !isImportingAttachment,
+            !urls.isEmpty, urls.allSatisfy(\.isFileURL) else { return false }
+        let group = currentGroup
         isImportingAttachment = true
         attachmentMessage = nil
         Task {
+            defer { isImportingAttachment = false }
             var failures: [String] = []
             for url in urls {
-                do { select(try await editing.addAttachment(from: url, to: profileID, group: group)) }
+                do {
+                    let id = try await editing.addAttachment(from: url, to: profileID, group: group)
+                    if currentGroup == group { select(id) }
+                }
                 catch { failures.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
             }
             attachmentMessage = failures.isEmpty ? nil : failures.joined(separator: "；")
-            isImportingAttachment = false
         }
+        return true
     }
     func replaceAttachment() {
         guard !isImportingAttachment, let id = selectedSnippet?.id, let url = chooseAttachments(false).first else { return }
