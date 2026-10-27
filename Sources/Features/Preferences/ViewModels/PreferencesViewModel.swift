@@ -58,6 +58,11 @@ final class PreferencesViewModel {
         get { entry.loginEnabled }
         set { entry.setLoginEnabled(newValue) }
     }
+    var silentLaunchEnabled: Bool {
+        get { entry.silentLaunchEnabled }
+        set { entry.setSilentLaunchEnabled(newValue) }
+    }
+    var entryNotice: String { entry.notice }
     var dockIconVisible: Bool {
         get { entry.dockIconVisible }
         set { entry.setDockIconVisible(newValue) }

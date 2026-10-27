@@ -6,6 +6,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private let viewModel: MainWindowViewModel
     private let preferences: PreferencesViewModel
+    var onClose: (() -> Void)?
     init(viewModel: MainWindowViewModel, preferences: PreferencesViewModel) {
         self.viewModel = viewModel
         self.preferences = preferences
@@ -28,9 +29,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             window.center()
             settingsWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        if settingsWindow?.isMiniaturized == true { settingsWindow?.deminiaturize(nil) }
+        NSApp.unhide(nil)
         settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
     func windowWillClose(_ notification: Notification) {
+        onClose?()
     }
 }

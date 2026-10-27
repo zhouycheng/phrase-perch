@@ -19,7 +19,8 @@ final class AppDependencies {
     init(
         repository: ConfigurationRepository? = nil,
         authorizationEnvironment: AuthorizationEnvironment = AuthorizationEnvironment(),
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        entryPlatform: any AppEntryPlatform = MacAppEntryController()
     ) {
         let repository = repository ?? ConfigurationRepository(initialConfiguration: ApplicationCatalog.initialConfiguration())
         self.repository = repository
@@ -32,7 +33,7 @@ final class AppDependencies {
         authorization = AuthorizationService(
             store: repository, guide: authorizationGuide,
             environment: authorizationEnvironment, defaults: defaults)
-        entry = AppEntryService(store: repository)
+        entry = AppEntryService(store: repository, platform: entryPlatform, defaults: defaults)
         files = ConfigurationFileService(store: repository, editing: editing, dialog: MacConfigurationFileDialog())
         monitor = TriggerEventMonitor()
         runtime = TriggerSessionService(
@@ -46,6 +47,7 @@ final class AppDependencies {
             monitorAvailable: { [monitor] in monitor.mouseMonitorAvailable },
             diagnostics: runtime.diagnostics, shortcutState: { [monitor] in monitor.shortcutStatus })
         mainWindow = MainWindowController(viewModel: mainWindowViewModel, preferences: preferencesViewModel)
+        mainWindow.onClose = { [weak entry] in entry?.setMainWindowOpen(false) }
         authorization.onInvalidate = { [weak runtime] in runtime?.invalidate() }
         files.onInvalidate = { [weak runtime] in runtime?.invalidate() }
     }

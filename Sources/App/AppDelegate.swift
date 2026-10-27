@@ -10,13 +10,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "\(Bundle.main.bundleIdentifier ?? "local.PhrasePerch").reopenSettings")
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard NSClassFromString("XCTestCase") == nil else { return }
+        let launchedAtLogin = MacAppEntryController.wasLaunchedAtLogin(NSAppleEventManager.shared().currentAppleEvent)
         do {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "\(Bundle.main.bundleIdentifier ?? "local.PhrasePerch").instance.lock")
             guard let descriptor = try SingleInstanceLock.acquire(at: url) else {
                 DistributedNotificationCenter.default().postNotificationName(
                     reopenNotification,
-                    object: nil, userInfo: nil, deliverImmediately: true)
+                    object: nil, userInfo: ["launchedAtLogin": launchedAtLogin], deliverImmediately: true)
                 NSApp.terminate(nil)
                 return
             }
@@ -31,12 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.mainMenu = ApplicationMenuBuilder.make()
         coordinator = ApplicationCoordinator()
-        coordinator?.start()
+        coordinator?.start(launchedAtLogin: launchedAtLogin)
         reopenObserver = DistributedNotificationCenter.default().addObserver(
             forName: reopenNotification,
             object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.coordinator?.openMainWindow() }
+        ) { [weak self] notification in
+            let launchedAtLogin = notification.userInfo?["launchedAtLogin"] as? Bool ?? false
+            MainActor.assumeIsolated { self?.coordinator?.openMainWindow(launchedAtLogin: launchedAtLogin) }
         }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

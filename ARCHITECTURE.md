@@ -35,6 +35,10 @@ flowchart LR
 
 三个窗口控制器由组装层持有。主窗口关闭后，运行时事件监控继续工作；重新打开主窗口保留编辑会话。
 
+`AppEntryService` 将本机后台入口偏好与主窗口打开状态合并，统一决定 Dock 策略：主窗口打开或后台 Dock 偏好开启时使用 regular，关闭窗口后按后台偏好恢复。最小化和切换应用保留打开状态；`ApplicationCoordinator` 在打开窗口前更新入口服务，窗口关闭通过组装层回调通知服务。策略切换失败时保留可用菜单栏入口并展示反馈，窗口生命周期变化保留用户偏好。
+
+菜单栏按钮左键复用并激活主窗口，右键弹出操作菜单。启动入口检查系统启动 Apple event 中的登录标记，`ApplicationCoordinator.start(launchedAtLogin:)` 仅在登录启动且开启静默启动时保持后台运行；手动启动、重复打开和授权重启显示主窗口。静默启动默认开启，与 Dock、菜单栏偏好一起保存在可注入的 UserDefaults 中。
+
 ## 编辑与保存
 
 文本控件的 Binding setter 调用 ViewModel，ViewModel 调用 `ProfileEditingService` 按应用 ID、文案 ID 修改配置。应用、文案和偏好修改都进入 `ConfigurationRepository.update`，Repository 对配置变更执行校验、递增修订号并通知独立订阅者。
