@@ -1,4 +1,3 @@
-<p align="center"><img src="Resources/AppIcon.png" alt="PhrasePerch app icon" width="128"></p>
 <p align="center"><strong>PhrasePerch 是一款原生 macOS 快捷内容工具</strong></p>
 
 https://github.com/user-attachments/assets/5536f313-15a5-4ec2-8ba6-9f2571b42fa4
