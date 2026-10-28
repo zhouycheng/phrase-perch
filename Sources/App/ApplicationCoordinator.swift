@@ -22,6 +22,7 @@ final class ApplicationCoordinator {
         dependencies.authorization.refreshPermissions()
         dependencies.entry.setMainWindowOpen(true)
         dependencies.mainWindow.open()
+        dependencies.authorization.checkFirstManualEntry(launchedAtLogin: launchedAtLogin)
     }
     func stop() {
         dependencies.runtime.stop()

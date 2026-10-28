@@ -10,6 +10,7 @@ struct AuthorizationPreferencesCardView: View {
                     detail: viewModel.authorizationDetail,
                     isRestarting: viewModel.isRestarting,
                     action: viewModel.performAuthorizationAction)
+                Button("查看权限设置", action: viewModel.showPermissionSetup)
                 if !viewModel.mouseMonitorAvailable {
                     SettingsExplanationView(text: "鼠标触发暂不可用，仍可使用上方录制的快捷键。")
                 }

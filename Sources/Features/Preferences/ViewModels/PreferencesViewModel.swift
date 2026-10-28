@@ -71,6 +71,7 @@ final class PreferencesViewModel {
         get { entry.menuBarIconVisible }
         set { entry.setMenuBarIconVisible(newValue) }
     }
+    func showPermissionSetup() { authorization.showPermissionSetup() }
     func performAuthorizationAction() { authorization.performAuthorizationAction() }
     func importConfiguration() { files.importConfiguration() }
     func exportConfiguration() { files.exportConfiguration() }

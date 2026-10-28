@@ -127,12 +127,10 @@ final class FloatingMenuTests: PresentationTestCase {
             CGRect(x: 400, y: 140, width: 740, height: 1050), CGRect(x: 400, y: 140, width: 600, height: 800)] {
             guide.updatePlacement(applicationURL: url, settings: settings, visible: screen)
             let expected = authorizationGuideFrame(settings: settings, visible: screen)
-            XCTAssertEqual(expected.midX, settings.minX + settings.width * 0.66, accuracy: 0.001)
-            XCTAssertEqual(expected.midY, settings.minY + settings.height * 0.2, accuracy: 0.001)
             // AppKit aligns native windows to display pixels.
             XCTAssertEqual(guide.panel.frame.midX, expected.midX, accuracy: 1)
             XCTAssertEqual(guide.panel.frame.midY, expected.midY, accuracy: 1)
-            XCTAssertTrue(settings.contains(guide.panel.frame))
+            XCTAssertTrue(screen.contains(guide.panel.frame))
             XCTAssertEqual(guide.panel.contentView?.frame.size, guide.panel.frame.size)
             let drag = try XCTUnwrap(guide.panel.contentView?.subviews.compactMap { $0 as? ApplicationDragView }.first)
             XCTAssertEqual(drag.applicationURL, url)
@@ -142,7 +140,63 @@ final class FloatingMenuTests: PresentationTestCase {
         let settings = CGRect(x: -1200, y: -100, width: 700, height: 700)
         guide.updatePlacement(applicationURL: url, settings: settings, visible: other)
         XCTAssertTrue(other.contains(guide.panel.frame))
-        XCTAssertTrue(settings.contains(guide.panel.frame))
         try savePreview(try XCTUnwrap(guide.panel.contentView), name: "authorization-positioned.png")
     }
+    func testAuthorizationPlacementPrefersExteriorAndFallsBackToTopLeft() {
+        let screen = CGRect(x: 0, y: 0, width: 1600, height: 1200)
+        let cases: [(CGRect, CGPoint)] = [
+            (CGRect(x: 500, y: 400, width: 600, height: 600), CGPoint(x: 590, y: 276)),
+            (CGRect(x: 200, y: 0, width: 600, height: 1200), CGPoint(x: 812, y: 544)),
+            (CGRect(x: 1000, y: 0, width: 600, height: 1200), CGPoint(x: 568, y: 544)),
+            (CGRect(x: 0, y: 0, width: 1600, height: 800), CGPoint(x: 590, y: 812)),
+            (screen, CGPoint(x: 12, y: 1076)),
+        ]
+        for (settings, origin) in cases {
+            let frame = authorizationGuideFrame(settings: settings, visible: screen)
+            XCTAssertEqual(frame.origin, origin)
+            XCTAssertTrue(screen.contains(frame))
+            if settings != screen { XCTAssertFalse(frame.intersects(settings)) }
+        }
+    }
+
+    @MainActor
+    func testAuthorizationManualPlacementSurvivesFollowUpdatesAndClampsToScreen() throws {
+        let guide = AuthorizationGuideWindowController()
+        defer { guide.hide() }
+        let screen = CGRect(x: 0, y: 0, width: 1600, height: 1200)
+        let url = Bundle.main.bundleURL
+        guide.updatePlacement(applicationURL: url, settings: nil, visible: screen)
+        let backdrop = try XCTUnwrap(guide.panel.contentView as? AuthorizationBackdrop)
+        backdrop.onBeginMoving?()
+        let manual = CGRect(x: 40, y: 500, width: 420, height: 112)
+        guide.panel.setFrame(manual, display: false)
+        guide.updatePlacement(applicationURL: url, settings: screen, visible: screen)
+        XCTAssertEqual(guide.panel.frame, manual)
+        let smaller = CGRect(x: 0, y: 0, width: 800, height: 600)
+        guide.updatePlacement(applicationURL: url, settings: screen, visible: smaller)
+        XCTAssertTrue(smaller.contains(guide.panel.frame))
+        guide.hide()
+        XCTAssertFalse(guide.manuallyPositioned)
+        guide.updatePlacement(applicationURL: url, settings: screen, visible: screen)
+        XCTAssertEqual(guide.panel.frame, authorizationGuideFrame(settings: screen, visible: screen))
+    }
+
+    @MainActor
+    func testSettingsWindowIdentitySurvivesFrontmostPasswordDialog() throws {
+        func entry(_ id: CGWindowID, _ frame: CGRect, pid: pid_t = 42, layer: Int = 0) -> [String: Any] {
+            [kCGWindowNumber as String: id, kCGWindowOwnerPID as String: pid,
+                kCGWindowLayer as String: layer, kCGWindowBounds as String: frame.dictionaryRepresentation]
+        }
+        let main = entry(1, CGRect(x: 100, y: 100, width: 800, height: 1000))
+        let password = entry(2, CGRect(x: 300, y: 400, width: 300, height: 400))
+        let unrelated = entry(3, CGRect(x: 0, y: 0, width: 2000, height: 2000), pid: 43)
+        let overlay = entry(4, CGRect(x: 0, y: 0, width: 2000, height: 2000), layer: 3)
+        for trackedID: CGWindowID? in [nil, 1] {
+            let selected = AuthorizationGuideWindowController.settingsWindow(
+                in: [password, unrelated, overlay, main], pid: 42, trackedID: trackedID)
+            XCTAssertEqual(selected?[kCGWindowNumber as String] as? CGWindowID, 1)
+        }
+        XCTAssertNil(AuthorizationGuideWindowController.settingsWindow(in: [password], pid: 42, trackedID: 1))
+    }
+
 }

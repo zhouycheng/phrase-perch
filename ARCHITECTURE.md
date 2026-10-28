@@ -27,17 +27,20 @@ flowchart LR
 
 独立组件与主要类型分别使用同名文件。功能组件位于所属功能目录，已存在跨功能复用的组件位于 `Shared`。
 
-## 三个独立窗口模块
+## 窗口模块
 
 - **主窗口**：`MainWindowController` 复用同一个窗口；`MainWindowViewModel` 保存导航、应用选择和每个应用的编辑会话。编辑与设置分别由 `ProfileEditorViewModel`、`PreferencesViewModel` 处理。
 - **运行时菜单**：`FloatingMenuWindowController` 管理非激活面板；`FloatingMenuViewModel` 保存展示会话与选中状态。`TriggerSessionService` 通过 `FloatingMenuPresenting` 请求展示、查询选中项和收起。
-- **授权引导**：`AuthorizationGuideWindowController` 管理独立面板；`AuthorizationGuideViewModel` 保存引导展示状态。授权服务通过 `AuthorizationGuidePresenting` 连接引导。
+- **授权拖拽卡片**：`AuthorizationGuideWindowController` 管理非激活面板，按窗口 ID 跟随系统设置主窗口，优先在外侧摆放；手动移动后在本次展示中保留位置。授权服务通过 `AuthorizationGuidePresenting` 连接卡片。
+- **权限设置引导**：`PermissionSetupWindowController` 管理普通设置窗口，`PermissionSetupViewModel` 从授权服务读取统一的 `PermissionRequirement` 列表并转发操作。列表区分已授权、待授权、待生效、需修复和无需授权状态；当前展示辅助功能，后续权限通过同一列表接入。
 
-三个窗口控制器由组装层持有。主窗口关闭后，运行时事件监控继续工作；重新打开主窗口保留编辑会话。
+窗口控制器由组装层持有。主窗口关闭后，运行时事件监控继续工作；重新打开主窗口保留编辑会话。
 
 `AppEntryService` 将本机后台入口偏好与主窗口打开状态合并，统一决定 Dock 策略：主窗口打开或后台 Dock 偏好开启时使用 regular，关闭窗口后按后台偏好恢复。最小化和切换应用保留打开状态；`ApplicationCoordinator` 在打开窗口前更新入口服务，窗口关闭通过组装层回调通知服务。策略切换失败时保留可用菜单栏入口并展示反馈，窗口生命周期变化保留用户偏好。
 
 菜单栏按钮左键复用并激活主窗口，右键弹出操作菜单。启动入口检查系统启动 Apple event 中的登录标记，`ApplicationCoordinator.start(launchedAtLogin:)` 仅在登录启动且开启静默启动时保持后台运行；手动启动、重复打开和授权重启显示主窗口。静默启动默认开启，与 Dock、菜单栏偏好一起保存在可注入的 UserDefaults 中。
+
+权限引导在每次进程的首次手动打开主窗口时按需展示；登录启动将该检查留给首次手动打开。关闭、最小化恢复及重复打开窗口保留本次已检查标记。运行期间继续刷新权限状态，设置页可手动打开引导；引导窗口可见期间定时刷新，回到应用时立即刷新。
 
 ## 编辑与保存
 

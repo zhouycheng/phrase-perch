@@ -24,7 +24,42 @@ final class AuthorizationService {
         InputAuthorizationStatus(accessibility: accessibilityGranted, paste: postEventsGranted)
     }
     var notice = ""
+    private(set) var permissionSetupError = ""
     var onInvalidate: (() -> Void)?
+    var onShowPermissionSetup: (() -> Void)?
+    private var checkedFirstManualEntry = false
+
+    var permissionRequirements: [PermissionRequirement] {
+        let status: PermissionRequirement.Status
+        let action: String?
+        switch authorizationStep {
+        case .authorize: status = .notGranted; action = "授权"
+        case .restart: status = .pending; action = "重启 PhrasePerch"
+        case .ready: status = .granted; action = nil
+        case .reauthorize: status = .repair; action = "重新设置权限"
+        }
+        return [PermissionRequirement(id: "accessibility", title: "辅助功能",
+            purpose: "在输入框旁显示快捷栏，并填入你选择的内容。", status: status,
+            instructions: status == .pending
+                ? "系统授权已开启，请重启 PhrasePerch 使权限生效。"
+                : "打开系统设置后，将提示卡片中的 PhrasePerch 拖入授权列表，开启开关，再按提示返回重启。拖动卡片背景可以调整位置。",
+            actionTitle: action)]
+    }
+    func checkFirstManualEntry(launchedAtLogin: Bool) {
+        guard !launchedAtLogin, !checkedFirstManualEntry else { return }
+        checkedFirstManualEntry = true
+        refreshPermissions()
+        if permissionRequirements.contains(where: \.needsAttention) { onShowPermissionSetup?() }
+    }
+    func showPermissionSetup() {
+        refreshPermissions()
+        onShowPermissionSetup?()
+    }
+    func performPermissionAction(for id: String) {
+        guard id == "accessibility" else { return }
+        performAuthorizationAction()
+    }
+
     private let authorizationGuide: any AuthorizationGuidePresenting
     private var authorizationTask: Task<Void, Never>?
     private var authorizationPending = false
@@ -113,6 +148,7 @@ final class AuthorizationService {
     }
 
     func openAuthorizationSettings() {
+        permissionSetupError = ""
         onInvalidate?()
         refreshPermissions()
         let opened = authorizationEnvironment.openSettings()
@@ -121,6 +157,7 @@ final class AuthorizationService {
             ? "请在系统设置中添加并开启当前 PhrasePerch，然后返回应用重启。"
             : "无法打开授权页面。请手动打开系统设置的权限列表，添加并开启当前 PhrasePerch。"
         notice = permissionFeedback
+        if !opened { permissionSetupError = permissionFeedback }
         if opened {
             watchAuthorization()
             authorizationTask = Task { [weak self] in
@@ -140,8 +177,10 @@ final class AuthorizationService {
 
     func restartForAuthorization() {
         guard !isRestarting else { return }
+        permissionSetupError = ""
         guard store.isReady else {
             notice = "配置尚未正常加载，已取消重启。请先处理配置读取错误。"
+            permissionSetupError = notice
             return
         }
         onInvalidate?()
@@ -151,6 +190,7 @@ final class AuthorizationService {
             guard await authorizationEnvironment.save(store) else {
                 isRestarting = false
                 notice = "配置未保存，已取消重启。请先处理保存错误。"
+                permissionSetupError = notice
                 return
             }
             do {
@@ -163,6 +203,7 @@ final class AuthorizationService {
                 authorizationDefaults.removeObject(forKey: Self.restartPendingKey)
                 isRestarting = false
                 notice = "重启失败：\(error.localizedDescription)。当前应用仍在运行。"
+                permissionSetupError = notice
             }
         }
     }

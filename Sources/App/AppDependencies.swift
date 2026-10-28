@@ -8,6 +8,7 @@ final class AppDependencies {
     let floatingMenu: FloatingMenuWindowController
     let authorizationGuide: AuthorizationGuideWindowController
     let authorization: AuthorizationService
+    let permissionSetup: PermissionSetupWindowController
     let entry: AppEntryService
     let files: ConfigurationFileService
     let monitor: TriggerEventMonitor
@@ -33,6 +34,7 @@ final class AppDependencies {
         authorization = AuthorizationService(
             store: repository, guide: authorizationGuide,
             environment: authorizationEnvironment, defaults: defaults)
+        permissionSetup = PermissionSetupWindowController(viewModel: PermissionSetupViewModel(authorization: authorization))
         entry = AppEntryService(store: repository, platform: entryPlatform, defaults: defaults)
         files = ConfigurationFileService(store: repository, editing: editing, dialog: MacConfigurationFileDialog())
         monitor = TriggerEventMonitor()
@@ -48,6 +50,7 @@ final class AppDependencies {
             diagnostics: runtime.diagnostics, shortcutState: { [monitor] in monitor.shortcutStatus })
         mainWindow = MainWindowController(viewModel: mainWindowViewModel, preferences: preferencesViewModel)
         mainWindow.onClose = { [weak entry] in entry?.setMainWindowOpen(false) }
+        authorization.onShowPermissionSetup = { [weak permissionSetup] in permissionSetup?.show() }
         authorization.onInvalidate = { [weak runtime] in runtime?.invalidate() }
         files.onInvalidate = { [weak runtime] in runtime?.invalidate() }
     }
