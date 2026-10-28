@@ -71,6 +71,16 @@ xcodebuild -project PhrasePerch.xcodeproj -scheme PhrasePerch \
   -derivedDataPath .build build
 ```
 
+生成 DMG 安装包：
+
+```bash
+bash scripts/build-dmg.sh
+```
+
+脚本清理项目构建目录后重新构建 Release arm64 应用，生成并校验 `.build/PhrasePerch.dmg`。安装包包含应用和指向“应用程序”目录的快捷入口。
+
+推送到 `main` 时，[Build DMG](https://github.com/zhouycheng/phrase-perch/actions/workflows/build-dmg.yml) 工作流使用 Xcode 27 自动打包；也可在该页面点击“Run workflow”手动触发。运行成功后，从 Artifacts 下载 `PhrasePerch.dmg`。自动构建沿用项目的 ad hoc 签名。
+
 默认测试使用离屏渲染，不会在桌面展示测试窗口或快捷菜单。窗口复用、菜单动画和连续开合测试默认跳过；需要专门验证这些可见行为时，在 Xcode 的测试 Scheme 中设置 `PHRASEPERCH_VISIBLE_UI_TESTS=1` 后运行。
 
 项目结构：
