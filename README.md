@@ -1,6 +1,6 @@
 <p align="center"><strong>PhrasePerch 是一款原生 macOS 快捷内容工具</strong></p>
 
-https://github.com/user-attachments/assets/5536f313-15a5-4ec2-8ba6-9f2571b42fa4
+<p align="center"><img src="Resources/PhrasePerch-Demo.gif" alt="PhrasePerch 功能演示"></p>
 
 <p align="center">
   <a href="#安装与授权"><img src="https://img.shields.io/badge/target-macOS%2014%20%7C%20arm64-000000" alt="Target platform"></a>
@@ -97,7 +97,7 @@ Sources/Persistence/   配置状态、文件存储与备份
 Sources/Platform/      macOS 系统能力适配
 Sources/Shared/        可复用组件与样式
 Tests/                 分层回归测试与原生预览
-Resources/             应用图标与第三方许可
+Resources/             应用图标、演示动图与第三方许可
 ```
 
 架构和职责说明见 [架构文档](ARCHITECTURE.md)。
