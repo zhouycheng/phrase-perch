@@ -39,7 +39,10 @@ struct RadialLayout {
                 CGRect(x: $0.minX, y: -$0.maxY, width: $0.width, height: $0.height)
             }
         guard ring.count == count else { return nil }
-        let bounds = ring.reduce(CGRect(x: -24, y: -24, width: 48, height: 48)) { $0.union($1) }
+        let hoverOutset = (FloatingMenuAnimationConfiguration.hoverScale - 1) / 2
+        let bounds = ring.reduce(CGRect(x: -24, y: -24, width: 48, height: 48)) {
+            $0.union($1.insetBy(dx: -$1.width * hoverOutset, dy: -$1.height * hoverOutset))
+        }
         guard bounds.width <= safe.width, bounds.height <= safe.height else { return nil }
         let center = CGPoint(
             x: max(safe.minX - bounds.minX, min(anchor.x, safe.maxX - bounds.maxX)),
@@ -50,7 +53,7 @@ struct RadialLayout {
         self.center = center
         items = translated
         let radius = ring.map { hypot(max(abs($0.minX), abs($0.maxX)), max(abs($0.minY), abs($0.maxY))) }
-            .max()! * FloatingMenuAnimationConfiguration.peakScale
+            .max()! * FloatingMenuAnimationConfiguration.peakScale * FloatingMenuAnimationConfiguration.hoverScale
         let envelope = CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2)
         frame = envelope.offsetBy(dx: center.x, dy: center.y)
             .union(envelope.offsetBy(dx: anchor.x, dy: anchor.y))

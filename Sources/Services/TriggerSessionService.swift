@@ -163,6 +163,7 @@ final class TriggerSessionService {
                 let anchor = MenuAnchor(mode: mode, mouse: mouse, caretBounds: captured.caretBounds,
                     primaryScreenTop: top, screens: screens, editorBounds: captured.editorBounds)
                 floating.interactionMode = source == .shortcut ? .persistent : .hold
+                floating.menuAppearance = store.configuration.preferences.menuAppearance
                 floating.titleCharacterLimit = store.configuration.preferences.menuTitleCharacterLimit
                 guard hold.show(token), floating.show(profile: profile, at: anchor.point,
                     initialMouse: mouse, requiresMovement: true) else {

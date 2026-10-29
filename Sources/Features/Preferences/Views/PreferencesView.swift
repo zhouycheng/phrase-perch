@@ -9,8 +9,18 @@ struct PreferencesView: View {
             VStack(alignment: .leading, spacing: 24) {
                 PageHeaderView(title: "设置", subtitle: "管理快捷栏、系统权限和启动方式")
 
-                SettingsCardView(title: "轮盘显示", symbol: "textformat.size", badge: "标题") {
+                SettingsCardView(title: "轮盘显示", symbol: "textformat.size", badge: "外观") {
                     VStack(alignment: .leading, spacing: 12) {
+                        SettingsControlRow("节点外观") {
+                            Picker("节点外观", selection: $viewModel.menuAppearance) {
+                                ForEach(MenuAppearance.allCases, id: \.self) { style in
+                                    Text(style.title).tag(style)
+                                }
+                            }.labelsHidden().disabled(!viewModel.isReady)
+                        }
+                        if #unavailable(macOS 26) {
+                            SettingsExplanationView(text: "液态玻璃在 macOS 26 及以上生效，当前系统使用深色哑光。")
+                        }
                         SettingsControlRow("标题显示字数") {
                             HStack {
                                 TextField("字数", value: $viewModel.menuTitleCharacterLimit, format: .number)

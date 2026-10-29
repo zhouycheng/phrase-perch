@@ -9,7 +9,7 @@ final class FloatingMenuView: NSView {
     private let content = NSView(frame: .zero)
     var animationLayer: CALayer? { content.layer }
     var allowsClick = false
-    func configure(slots: [RadialNode?], layout: RadialLayout, titles: [String?]? = nil) {
+    func configure(slots: [RadialNode?], layout: RadialLayout, titles: [String?]? = nil, appearance: MenuAppearance = .matte) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -20,7 +20,7 @@ final class FloatingMenuView: NSView {
         content.layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
         frame = CGRect(origin: .zero, size: layout.frame.size)
         wantsLayer = true
-        appearance = NSAppearance(named: .darkAqua)
+        self.appearance = NSAppearance(named: .darkAqua)
         content.frame = bounds
         content.wantsLayer = true
         if content.superview == nil { addSubview(content) }
@@ -49,6 +49,7 @@ final class FloatingMenuView: NSView {
             button.symbolName = node.symbol
             button.setAccessibilityLabel(node.title)
             button.toolTip = String(node.detail.prefix(180))
+            button.configureAppearance(appearance)
             nodes.append(node)
             buttons.append(button)
             content.addSubview(button)
@@ -73,7 +74,14 @@ final class FloatingMenuView: NSView {
         let point = CGPoint(x: offset.x + shown.bounds.minX + shown.anchorPoint.x * shown.bounds.width,
             y: offset.y + shown.bounds.minY + shown.anchorPoint.y * shown.bounds.height)
         return buttons.firstIndex { button in
-            CGPath(roundedRect: button.frame, cornerWidth: 12, cornerHeight: 12, transform: nil).contains(point)
+            guard let buttonLayer = button.layer else { return false }
+            let shownButton = buttonLayer.animation(forKey: "nodeHover") == nil
+                ? buttonLayer : (buttonLayer.presentation() ?? buttonLayer)
+            let offset = CGPoint(x: point.x - shownButton.position.x, y: point.y - shownButton.position.y)
+                .applying(shownButton.affineTransform().inverted())
+            let local = CGPoint(x: offset.x + shownButton.bounds.minX + shownButton.anchorPoint.x * shownButton.bounds.width,
+                y: offset.y + shownButton.bounds.minY + shownButton.anchorPoint.y * shownButton.bounds.height)
+            return CGPath(roundedRect: shownButton.bounds, cornerWidth: 12, cornerHeight: 12, transform: nil).contains(local)
         }
     }
     func showSelection(_ index: Int?) {

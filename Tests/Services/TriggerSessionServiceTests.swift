@@ -120,12 +120,14 @@ final class TriggerSessionServiceTests: XCTestCase {
         repository.update {
             $0.preferences.copyOnInsert = false
             $0.preferences.menuTitleCharacterLimit = 30
+            $0.preferences.menuAppearance = .clearGlass
             $0.profiles[0].buttons[0].content = .attachment(AttachmentReference(fileName: "test.txt", byteCount: 4))
         }
         await worker.setCapture(canPaste: true, canDirectWrite: false)
         monitor.onShortcutDown?(); monitor.onShortcutUp?()
         try await settle()
         XCTAssertEqual(menu.titleCharacterLimit, 30)
+        XCTAssertEqual(menu.menuAppearance, .clearGlass)
         menu.onSelect?(snippet.id); menu.onSelect?(snippet.id)
         try await settle(120)
         XCTAssertEqual(paste.fileCopies, [url])

@@ -1,9 +1,158 @@
 import AppKit
 import XCTest
+import SwiftUI
 
 @testable import PhrasePerch
 
-final class FloatingMenuAnimatorTests: XCTestCase {
+final class FloatingMenuAnimatorTests: PresentationTestCase {
+    func testMenuAppearanceRoundtripAndLegacyDefault() throws {
+        for style in MenuAppearance.allCases {
+            var preferences = Preferences()
+            preferences.menuAppearance = style
+            let data = try JSONEncoder().encode(preferences)
+            XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: data), preferences)
+        }
+        let data = try JSONEncoder().encode(Preferences())
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "menuAppearance")
+        XCTAssertEqual(try JSONDecoder().decode(Preferences.self,
+            from: JSONSerialization.data(withJSONObject: object)).menuAppearance, .matte)
+        object["menuAppearance"] = "invalid"
+        XCTAssertThrowsError(try JSONDecoder().decode(Preferences.self,
+            from: JSONSerialization.data(withJSONObject: object)))
+    }
+
+    @MainActor
+    func testGlassNodesPreserveSelectionAndHitTesting() throws {
+        guard #available(macOS 26, *) else { throw XCTSkip("Liquid Glass requires macOS 26") }
+        let layout = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 400, y: 400),
+            visible: CGRect(x: 0, y: 0, width: 1000, height: 800), count: 1))
+        let snippet = Snippet(title: "快捷回复", text: "正文")
+        let view = FloatingMenuView(frame: .zero)
+        view.allowsClick = true
+        var action: RadialNode.Action?
+        view.onSelect = { action = $0 }
+        for style in MenuAppearance.allCases {
+            view.configure(slots: [.content(snippet)], layout: layout, appearance: style)
+            let button = try XCTUnwrap(view.buttons.first as? FloatingMenuButton)
+            let glass = button.subviews.compactMap { $0 as? NSGlassEffectView }.first
+            if style == .matte { XCTAssertNil(glass) }
+            else {
+                XCTAssertEqual(try XCTUnwrap(glass).style, style == .clearGlass ? .clear : .regular)
+                XCTAssertTrue(glass?.contentView is FloatingMenuLabelView)
+            }
+            XCTAssertEqual(view.interactiveIndex(CGPoint(x: button.frame.midX, y: button.frame.midY)), 0)
+            view.showSelection(0)
+            XCTAssertTrue(button.selected)
+            XCTAssertTrue(button.accessibilityPerformPress())
+            XCTAssertEqual(action, .content(snippet.id))
+            try savePreview(view, name: "wheel-appearance-\(style.rawValue).png")
+        }
+    }
+
+    @MainActor
+    func testAppearanceSettingsAtSupportedSizes() async throws {
+        let store = ConfigurationRepository(storage: StubConfigurationStorage())
+        for _ in 0..<100 where !store.isReady { try await Task.sleep(for: .milliseconds(5)) }
+        let suite = "PhrasePerch.Tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let coordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: store,
+            defaults: defaults, entryPlatform: StubAppEntryPlatform()))
+        defer { coordinator.stop() }
+        coordinator.preferencesViewModel.menuAppearance = .glass
+        XCTAssertEqual(store.configuration.preferences.menuAppearance, .glass)
+        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+            CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+            let root = NSHostingView(rootView: makeMainWindowView(coordinator, page: .settings)
+                .preferredColorScheme(.dark))
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = root
+            root.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(80))
+            try savePreview(root, name: "wheel-settings-\(Int(size.width)).png")
+            XCTAssertEqual(root.bounds.size, size)
+            window.close()
+        }
+        let saved = await store.flush()
+        XCTAssertTrue(saved)
+    }
+
+    @MainActor
+    func testNavigationCanInterruptChildExpansionAndIgnoreItsCompletion() throws {
+        let scheduler = ManualAnimationScheduler()
+        let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(scheduler: scheduler))
+        let snippet = Snippet(title: "内容", text: "正文")
+        let child = SnippetGroup(title: "子组", children: [MenuNode(kind: .snippet, id: snippet.id)])
+        let parent = SnippetGroup(title: "父组", children: [MenuNode(kind: .group, id: child.id)])
+        let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.navigation", fallbackBundlePath: nil),
+            displayName: "Test", buttons: [snippet], groups: [parent, child],
+            rootNodes: [MenuNode(kind: .group, id: parent.id)])
+        XCTAssertTrue(controller.configure(profile: profile, at: CGPoint(x: 500, y: 400),
+            visible: CGRect(x: 0, y: 0, width: 1400, height: 1000)))
+        _ = controller.viewModel.beginShow(initialMouse: .zero, requiresMovement: false)
+        controller.enterGroup(profile.groups[0].id)
+        scheduler.finish(0)
+        controller.enterGroup(profile.groups[1].id)
+        XCTAssertEqual(controller.currentGroup, profile.groups[1].id)
+        XCTAssertEqual(scheduler.durations, [0.12, 0.42, 0.12])
+        scheduler.finish(1)
+        XCTAssertEqual(controller.currentGroup, profile.groups[1].id)
+        scheduler.finish(2)
+        scheduler.finish(3)
+        XCTAssertNil(controller.selectedID)
+        controller.hide()
+    }
+
+    @MainActor
+    func testHoverUpdatesOnlyChangedNodesAndTracksScaledHitArea() throws {
+        let layout = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 400, y: 400),
+            visible: CGRect(x: 0, y: 0, width: 1000, height: 800), count: 2))
+        let view = FloatingMenuView(frame: .zero)
+        view.configure(slots: [.content(Snippet(title: "一", text: "一")),
+            .content(Snippet(title: "二", text: "二"))], layout: layout)
+        let first = try XCTUnwrap(view.buttons[0] as? FloatingMenuButton)
+        view.showSelection(0)
+        let layer = try XCTUnwrap(first.layer)
+        XCTAssertNotNil(layer.animation(forKey: "nodeHover"))
+        layer.removeAllAnimations()
+        first.needsDisplay = false
+        view.showSelection(0)
+        XCTAssertNil(layer.animation(forKey: "nodeHover"))
+        XCTAssertFalse(first.needsDisplay)
+        let scale = layer.transform.m11
+        let edge = CGPoint(x: first.frame.midX + first.frame.width * scale / 2 - 0.1, y: first.frame.midY)
+        XCTAssertEqual(view.interactiveIndex(edge), 0)
+        view.showSelection(1)
+        XCTAssertFalse(first.selected)
+        XCTAssertTrue(CATransform3DIsIdentity(layer.transform))
+        XCTAssertTrue((view.buttons[1] as? FloatingMenuButton)?.selected == true)
+    }
+
+    @MainActor
+    func testContentClickDuringExpansionCommitsWithoutWaitingForCompletion() throws {
+        try requireVisibleUITests()
+        for style in MenuAppearance.allCases {
+            let scheduler = ManualAnimationScheduler()
+            let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(scheduler: scheduler))
+            controller.interactionMode = .persistent
+            controller.menuAppearance = style
+            let snippet = Snippet(title: "内容", text: "正文")
+            let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.early", fallbackBundlePath: nil),
+                displayName: "Test", buttons: [snippet])
+            let screen = try XCTUnwrap(NSScreen.main)
+            var selected: UUID?
+            controller.onSelect = { selected = $0 }
+            XCTAssertTrue(controller.show(profile: profile, at: CGPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)))
+            defer { controller.panel.orderOut(nil); controller.hide() }
+            let view = try XCTUnwrap(controller.panel.contentView as? FloatingMenuView)
+            XCTAssertTrue(try XCTUnwrap(view.buttons.first as? FloatingMenuButton).accessibilityPerformPress())
+            XCTAssertEqual(selected, snippet.id)
+            XCTAssertEqual(scheduler.durations, [0.42])
+        }
+    }
+
     @MainActor
     func testWholeWheelUsesApprovedKeyframesAndFadeOnlyReducedMotion() throws {
         let layout = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 1, y: 1),

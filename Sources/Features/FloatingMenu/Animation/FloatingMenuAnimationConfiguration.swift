@@ -2,6 +2,7 @@ import Foundation
 
 struct FloatingMenuAnimationConfiguration: Equatable {
     enum Direction { case forward, backward }
+    static let hoverScale: CGFloat = 1.04
     static let peakScale: CGFloat = 1.015
     let expandDuration: TimeInterval
     let collapseDuration: TimeInterval
