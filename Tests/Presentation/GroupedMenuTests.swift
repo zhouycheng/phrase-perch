@@ -158,7 +158,8 @@ final class GroupedMenuTests: PresentationTestCase {
     @MainActor
     func testHoverDwellCancelsOnExitAndReturnRestoresRoot() async throws {
         let scheduler = ManualAnimationScheduler()
-        let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(scheduler: scheduler))
+        var mouse = CGPoint.zero
+        let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(scheduler: scheduler), mouseLocation: { mouse })
         let p = profile()
         XCTAssertTrue(controller.configure(profile: p, at: CGPoint(x: 600, y: 300), visible: CGRect(x: 0, y: 0, width: 1400, height: 1000)))
         _ = controller.viewModel.beginShow(initialMouse: .zero, requiresMovement: false)
@@ -168,6 +169,7 @@ final class GroupedMenuTests: PresentationTestCase {
         _ = controller.updateSelection(at: .zero)
         try await Task.sleep(for: .milliseconds(210))
         XCTAssertNil(controller.currentGroup)
+        mouse = point
         _ = controller.updateSelection(at: point)
         let frame = try XCTUnwrap(controller.layout).frame
         XCTAssertTrue(controller.isInteractive(CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)))
@@ -178,7 +180,8 @@ final class GroupedMenuTests: PresentationTestCase {
         scheduler.finish(0); scheduler.finish(1)
         let content = try XCTUnwrap(controller.viewModel.page)
         let back = content.layout.items[try XCTUnwrap(content.slots.firstIndex { $0?.action == .previous })]
-        XCTAssertNil(controller.updateSelection(at: CGPoint(x: back.midX, y: back.midY)))
+        mouse = CGPoint(x: back.midX, y: back.midY)
+        XCTAssertNil(controller.updateSelection(at: mouse))
         for _ in 0..<100 where scheduler.durations.count < 3 { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(scheduler.durations.count, 3)
         guard scheduler.durations.count == 3 else { return }

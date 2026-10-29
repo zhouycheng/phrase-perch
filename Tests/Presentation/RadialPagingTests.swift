@@ -272,7 +272,8 @@ final class RadialPagingTests: PresentationTestCase {
     @MainActor
     func testNextPageHoverRequiresDwellAndDoesNotSelectSnippet() async throws {
         let scheduler = ManualAnimationScheduler()
-        let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(scheduler: scheduler))
+        var mouse = CGPoint.zero
+        let controller = FloatingMenuWindowController(animator: FloatingMenuAnimator(scheduler: scheduler), mouseLocation: { mouse })
         let profile = AppProfile(application: ApplicationIdentity(bundleIdentifier: "test.hover", fallbackBundlePath: nil),
             displayName: "Test", buttons: (0..<13).map { Snippet(title: "文案 \($0)", text: "正文") })
         XCTAssertTrue(controller.configure(profile: profile, at: CGPoint(x: 700, y: 450),
@@ -285,6 +286,7 @@ final class RadialPagingTests: PresentationTestCase {
         _ = controller.updateSelection(at: .zero)
         try await Task.sleep(for: .milliseconds(210))
         XCTAssertEqual(controller.page, 0)
+        mouse = point
         XCTAssertNil(controller.updateSelection(at: point))
         XCTAssertTrue(controller.isInteractive(CGPoint(x: point.x - layout.frame.minX, y: point.y - layout.frame.minY)))
         for _ in 0..<100 where scheduler.durations.isEmpty { try await Task.sleep(for: .milliseconds(10)) }

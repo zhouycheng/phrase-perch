@@ -22,13 +22,14 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     private var hoverNode: RadialNode.Action?
     private var generation = 0
     private var changingPage = false
-    private var entering = false
     var hasNextPage: Bool { viewModel.page?.hasNext == true }
     var pageNodes: [RadialNode] { viewModel.page.map { Array($0.remaining.prefix($0.consumed)) } ?? [] }
     private let statusPanel = InteractionStatusPanel()
     let viewModel = FloatingMenuViewModel()
     var titleCharacterLimit = 10
+    var menuAppearance = MenuAppearance.matte
     private let menuView = FloatingMenuView(frame: .zero)
+    private let mouseLocation: () -> CGPoint
     private let animator: FloatingMenuAnimator
     var layout: RadialLayout? { viewModel.layout }
     var selectedID: UUID? { changingPage ? nil : viewModel.selectedID }
@@ -39,9 +40,11 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     var frame: CGRect { panel.frame }
 
     init(
-        animator: FloatingMenuAnimator = FloatingMenuAnimator()
+        animator: FloatingMenuAnimator = FloatingMenuAnimator(),
+        mouseLocation: @escaping () -> CGPoint = { NSEvent.mouseLocation }
     ) {
         self.animator = animator
+        self.mouseLocation = mouseLocation
         panel = FloatingMenuPanel(
             contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
@@ -56,7 +59,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.setAccessibilityLabel("径向快捷内容菜单")
         menuView.onSelect = { [weak self] action in
-            guard let self, isPresented, !entering, !changingPage else { return }
+            guard let self, isPresented, !changingPage else { return }
             activate(action)
         }
     }
@@ -85,7 +88,6 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         generation += 1
         animator.cancel()
         changingPage = false
-        entering = false
         page = 0
         menuView.layer?.removeAllAnimations()
         menuView.layer?.opacity = 1
@@ -104,12 +106,10 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main else { return false }
         guard configure(profile: profile, at: point, visible: screen.visibleFrame), let layout else { return false }
         let token = viewModel.beginShow(initialMouse: initialMouse ?? point, requiresMovement: requiresMovement)
-        entering = true
         panel.alphaValue = 1
         panel.ignoresMouseEvents = false
         animator.animate(layer: menuView.animationLayer, layout: layout, expanding: true) { [weak self] in
             guard let self, self.viewModel.finishShow(token) else { return }
-            self.entering = false
             self.updateSelection(at: NSEvent.mouseLocation)
         }
         panel.orderFrontRegardless()
@@ -127,7 +127,6 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         }
         generation += 1
         changingPage = false
-        entering = false
         animator.cancel()
         let token = viewModel.beginHide()
         panel.ignoresMouseEvents = true
@@ -156,7 +155,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         navigate(.next, nodes: Array(content.remaining.dropFirst(content.consumed)), group: currentGroup, page: page + 1)
     }
     private func navigate(_ action: RadialNode.Action, nodes: [RadialNode], group: UUID?, page: Int) {
-        guard isPresented, !entering, !changingPage, let content = viewModel.page,
+        guard isPresented, !changingPage, let content = viewModel.page,
             let slot = content.slots.firstIndex(where: { $0?.action == action }) else { return }
         let saved = NavigationFrame(group: currentGroup, content: content, page: self.page)
         let item = content.layout.items[slot]
@@ -191,7 +190,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         _ = viewModel.select(at: screenPoint, hitID: node?.contentID)
         menuView.showSelection(viewModel.acceptsHover ? index : nil)
         let navigation = viewModel.acceptsHover && node?.isNavigation == true ? node?.action : nil
-        scheduleHover(entering ? nil : navigation)
+        scheduleHover(navigation)
         panel.ignoresMouseEvents = !isPresented
         return selectedID
     }
@@ -207,6 +206,8 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         hoverTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
             guard let self, generation == token, hoverNode == id, isPresented else { return }
+            updateSelection(at: mouseLocation())
+            guard hoverNode == id else { return }
             activate(id)
         }
     }
@@ -215,7 +216,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         navigate(.group(id), nodes: RadialNode.contents(profile: profile, group: id), group: id, page: 0)
     }
     func returnToParent() {
-        guard isPresented, !entering, !changingPage, let parent = parents.last, let layout,
+        guard isPresented, !changingPage, let parent = parents.last, let layout,
             let slot = viewModel.page?.slots.firstIndex(where: { $0?.action == .previous }) else { return }
         let item = layout.items[slot]
         let point = CGPoint(x: item.midX, y: item.midY)
@@ -251,10 +252,11 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
     private func expandNavigation(direction: FloatingMenuAnimationConfiguration.Direction = .forward) {
         guard let layout else { return }
         let token = generation
+        viewModel.resetSelection(at: NSEvent.mouseLocation)
+        changingPage = false
         animator.animate(layer: menuView.animationLayer, layout: layout, expanding: true, direction: direction) { [weak self] in
             guard let self, generation == token, isPresented else { return }
-            viewModel.resetSelection(at: NSEvent.mouseLocation)
-            changingPage = false
+            self.updateSelection(at: NSEvent.mouseLocation)
         }
     }
     private func installMotionObservers() {
@@ -278,7 +280,7 @@ final class FloatingMenuWindowController: NSObject, FloatingMenuPresenting {
         guard let layout else { return }
         panel.setFrame(layout.frame, display: false)
         menuView.allowsClick = interactionMode == .persistent
-        menuView.configure(slots: viewModel.page?.slots ?? [], layout: layout, titles: viewModel.page?.titles)
+        menuView.configure(slots: viewModel.page?.slots ?? [], layout: layout, titles: viewModel.page?.titles, appearance: menuAppearance)
         panel.contentView = menuView
     }
     @objc private func dismiss() { if isPresented { onDismiss?() } }
