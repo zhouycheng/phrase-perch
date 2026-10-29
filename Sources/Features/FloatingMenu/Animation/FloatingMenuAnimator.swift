@@ -85,8 +85,8 @@ final class FloatingMenuAnimator {
         let times = [0.0, 0.69, 0.84, 1.0]
         // AppKit's upward Y axis reverses the preview's CSS rotation signs.
         let sign: CGFloat = direction == .forward ? 1 : -1
-        let angles: [CGFloat] = [55 * .pi / 180 * sign, 0, -3 * .pi / 180 * sign, 0]
-        let scales: [CGFloat] = [configuration.collapsedScale, 1, FloatingMenuAnimationConfiguration.peakScale, 1]
+        let angles: [CGFloat] = [55 * .pi / 180 * sign, 0, 0, 0]
+        let scales: [CGFloat] = [configuration.collapsedScale, 1, 1, 1]
         let curves: [SIMD4<Double>] = [SIMD4(0.2, 0.7, 0.2, 1), SIMD4(0.3, 0, 0.6, 1), SIMD4(0.2, 0.6, 0.3, 1)]
         var keyTimes: [NSNumber] = []
         var transforms: [NSValue] = []

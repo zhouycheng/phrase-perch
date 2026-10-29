@@ -154,7 +154,7 @@ final class FloatingMenuAnimatorTests: PresentationTestCase {
     }
 
     @MainActor
-    func testWholeWheelUsesApprovedKeyframesAndFadeOnlyReducedMotion() throws {
+    func testWholeWheelSettlesAtDestinationAndUsesFadeOnlyReducedMotion() throws {
         let layout = try XCTUnwrap(RadialLayout(anchor: CGPoint(x: 1, y: 1),
             visible: CGRect(x: 0, y: 0, width: 1000, height: 800), count: 6))
         for reduced in [false, true] {
@@ -175,12 +175,15 @@ final class FloatingMenuAnimatorTests: PresentationTestCase {
                 let motion = try XCTUnwrap(keyframes.first { $0.keyPath == "transform" })
                 let times = try XCTUnwrap(motion.keyTimes)
                 let values = try XCTUnwrap(motion.values as? [NSValue]).map(\.caTransform3DValue)
-                for (time, angle, scale) in [(0.0, 55.0, 0.24), (0.69, 0, 1), (0.84, -3, 1.015), (1, 0, 1)] {
+                for (time, angle, scale) in [(0.0, 55.0, 0.24), (0.69, 0, 1), (0.84, 0, 1), (1, 0, 1)] {
                     let index = try XCTUnwrap(times.firstIndex(of: NSNumber(value: time)))
                     XCTAssertEqual(atan2(values[index].m12, values[index].m11), angle * .pi / 180, accuracy: 0.000001)
                     XCTAssertEqual(hypot(values[index].m11, values[index].m12), scale, accuracy: 0.000001)
                 }
                 for (time, value) in zip(times, values) {
+                    if time.doubleValue >= 0.69 {
+                        XCTAssertTrue(CATransform3DIsIdentity(value))
+                    }
                     let scale = hypot(value.m11, value.m12)
                     let travel = time.doubleValue < 0.69 ? (1 - scale) / (1 - 0.24) : 0
                     let center = layout.localCenter.applying(CATransform3DGetAffineTransform(value))
