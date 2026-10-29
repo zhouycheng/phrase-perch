@@ -30,3 +30,5 @@ PhrasePerch 把常用文案和附件放进快捷菜单。回复消息、写邮�
 ## 安装
 
 支持 Apple Silicon Mac，需 macOS 14 或更新版本。下载 DMG 后，将 PhrasePerch 拖入“应用程序”，首次启动时按引导完成系统授权。下载入口和详细步骤见 [安装与授权](docs/installation.md)。
+
+<p align="center"><a href="https://github.com/zhouycheng/phrase-perch/releases/latest/download/PhrasePerch.dmg"><img alt="下载 PhrasePerch 最新版本" src="https://img.shields.io/github/v/release/zhouycheng/phrase-perch?style=for-the-badge&amp;label=%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&amp;color=2F81F7"></a></p>
