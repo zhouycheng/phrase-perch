@@ -32,6 +32,7 @@ struct RadialNode: Equatable, Identifiable {
         return profile.enabledNodes(in: group).compactMap { node in
             switch node.kind {
             case .snippet: return snippets[node.id].map(Self.content)
+            case .sync: return nil
             case .group: return RadialNode(action: .group(node.id), title: profile.title(of: node), detail: "打开分组", symbol: "chevron.right")
             }
         }

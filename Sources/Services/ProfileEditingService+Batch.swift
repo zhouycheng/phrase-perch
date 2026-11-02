@@ -25,10 +25,14 @@ extension ProfileEditingService {
         let memberIDs = Set(selection.members.map(\.id))
         var snippets = source.buttons.filter { memberIDs.contains($0.id) }
         var groups = source.groups.filter { memberIDs.contains($0.id) }
+        var syncs = source.syncs.filter { memberIDs.contains($0.id) }
         if copying {
             let replacements = Dictionary(uniqueKeysWithValues: memberIDs.map { ($0, UUID()) })
             func remap(_ nodes: [MenuNode]) -> [MenuNode] {
                 nodes.map { MenuNode(kind: $0.kind, id: replacements[$0.id]!) }
+            }
+            syncs = syncs.map { item in
+                var copy = item; copy.id = replacements[item.id]!; return copy
             }
             roots = remap(roots)
             snippets = snippets.map { item in
@@ -43,6 +47,7 @@ extension ProfileEditingService {
             else {
                 source.buttons.removeAll { memberIDs.contains($0.id) }
                 source.groups.removeAll { memberIDs.contains($0.id) }
+                source.syncs.removeAll { memberIDs.contains($0.id) }
             }
             if sourceIndex != destinationIndex { try source.validateHierarchy() }
             configuration.profiles[sourceIndex] = source
@@ -50,10 +55,12 @@ extension ProfileEditingService {
         if copying || sourceIndex != destinationIndex {
             destination.buttons += snippets
             destination.groups += groups
+            destination.syncs += syncs
         }
         destination.setChildren(destination.children(of: destinationGroup) + roots, of: destinationGroup)
         try destination.validateHierarchy()
         configuration.profiles[destinationIndex] = destination
+        try configuration.validateSyncReferences()
         repository.update { $0 = configuration }
     }
 
@@ -64,13 +71,14 @@ extension ProfileEditingService {
         profile.setChildren(profile.children(of: group).filter { !ids.contains($0.id) }, of: group)
         profile.buttons.removeAll { memberIDs.contains($0.id) }
         profile.groups.removeAll { memberIDs.contains($0.id) }
+        profile.syncs.removeAll { memberIDs.contains($0.id) }
         try profile.validateHierarchy()
         editProfile(profileID) { $0 = profile }
     }
 
-    func deletionCounts(_ ids: Set<UUID>, in profileID: UUID, group: UUID?) throws -> (groups: Int, contents: Int, ids: Set<UUID>) {
+    func deletionCounts(_ ids: Set<UUID>, in profileID: UUID, group: UUID?) throws -> (groups: Int, contents: Int, syncs: Int, ids: Set<UUID>) {
         let members = try selectedNodes(ids, in: profileID, group: group).members
-        return (members.filter { $0.kind == .group }.count, members.filter { $0.kind == .snippet }.count, Set(members.map(\.id)))
+        return (members.filter { $0.kind == .group }.count, members.filter { $0.kind == .snippet }.count, members.filter { $0.kind == .sync }.count, Set(members.map(\.id)))
     }
 
     func reorderNodes(_ ids: Set<UUID>, in profileID: UUID, group: UUID?, before nextID: UUID?) throws {

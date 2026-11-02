@@ -19,6 +19,10 @@ struct ApplicationRowView: View {
                         Text(profile.displayName).font(.system(size: 13)).lineLimit(1)
                         Text("\(profile.buttons.count) 项内容")
                             .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        if !profile.syncs.isEmpty {
+                            Text("\(profile.syncs.count) 个同步")
+                                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
                     .layoutPriority(1)
                     Spacer(minLength: 0)

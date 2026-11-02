@@ -19,7 +19,17 @@ struct ProfileEditorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             EditorStyle.separator.frame(width: 1)
             Group {
-                if let snippet = viewModel.selectedSnippet {
+                if let source = viewModel.selectedSyncSource, let syncID = viewModel.selectedSyncID {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Label(source.displayName, systemImage: "folder.badge.gearshape").font(.title2)
+                        Text("同步引入此应用中的全部内容，包含分组、附件及多级同步。来源内容变化后自动更新。")
+                            .foregroundStyle(.secondary)
+                        Text("双击同步入口前往来源应用编辑。")
+                            .foregroundStyle(.secondary)
+                        Button("前往来源应用") { viewModel.openSyncSource(syncID) }
+                        Spacer()
+                    }.padding(EditorStyle.contentInset)
+                } else if let snippet = viewModel.selectedSnippet {
                     VStack(alignment: .leading, spacing: 16) {
                         SnippetTitleEditorView(
                             text: Binding(

@@ -1,7 +1,7 @@
 import Foundation
 
 struct MenuNode: Codable, Equatable, Hashable, Identifiable, Sendable {
-    enum Kind: String, Codable, Sendable { case snippet, group }
+    enum Kind: String, Codable, Sendable { case snippet, group, sync }
     var kind: Kind
     var id: UUID
 }
@@ -43,18 +43,20 @@ extension AppProfile {
         return false
     }
     func validateHierarchy() throws {
-        let snippets = Set(buttons.map(\.id)), groupIDs = Set(groups.map(\.id))
+        let snippets = Set(buttons.map(\.id)), groupIDs = Set(groups.map(\.id)), syncIDs = Set(syncs.map(\.id))
         var visited = Set<UUID>(), pending = rootNodes
         while let node = pending.popLast() {
             guard visited.insert(node.id).inserted else { throw InputFailure("分组存在重复引用或循环归属") }
             switch node.kind {
             case .snippet:
                 guard snippets.contains(node.id) else { throw InputFailure("分组引用的内容不存在") }
+            case .sync:
+                guard syncIDs.contains(node.id) else { throw InputFailure("引用的同步不存在") }
             case .group:
                 guard groupIDs.contains(node.id) else { throw InputFailure("分组引用的子分组不存在") }
                 pending += children(of: node.id)
             }
         }
-        guard visited == snippets.union(groupIDs) else { throw InputFailure("存在未归属的内容或分组") }
+        guard visited == snippets.union(groupIDs).union(syncIDs) else { throw InputFailure("存在未归属的内容或分组") }
     }
 }

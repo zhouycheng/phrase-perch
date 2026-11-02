@@ -12,9 +12,11 @@ final class StubFloatingMenu: FloatingMenuPresenting {
     var frame = CGRect(x: 0, y: 0, width: 300, height: 300)
     var failureMessage = ""
     var selected: UUID?
+    var shownProfile: AppProfile?
     var shows = 0
     var messages: [String] = []
     func show(profile: AppProfile, at point: CGPoint, initialMouse: CGPoint?, requiresMovement: Bool) -> Bool {
+        shownProfile = profile
         isPresented = true
         shows += 1
         return true

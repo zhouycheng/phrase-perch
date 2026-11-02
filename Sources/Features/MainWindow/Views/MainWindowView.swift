@@ -34,7 +34,7 @@ struct MainWindowView: View {
             Button("取消", role: .cancel, action: viewModel.cancelDeletion)
             Button("移除", role: .destructive) { viewModel.confirmDeletion(id) }
         } message: { _ in
-            Text(viewModel.deletionName)
+            Text(viewModel.deletionMessage)
         }
         .alert("从最近有效备份恢复？", isPresented: $viewModel.recoveryAlert) {
             Button("取消", role: .cancel) {}

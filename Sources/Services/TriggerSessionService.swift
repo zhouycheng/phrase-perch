@@ -19,6 +19,7 @@ final class TriggerSessionService {
     private var previousModifiers: NSEvent.ModifierFlags = []
     private var timer: Timer?
     private var subscription: UUID?
+    private var menuProfile: AppProfile?
     private var snapshot: CapturedInputTarget?
     private var shortcutPressed = false
     var notice = "" {
@@ -83,7 +84,8 @@ final class TriggerSessionService {
     }
     func profile(for application: NSRunningApplication) -> AppProfile? {
         let identity = ApplicationIdentity(bundleIdentifier: application.bundleIdentifier, fallbackBundlePath: application.bundleURL?.path)
-        return store.configuration.profiles.first { $0.application.key == identity.key }
+        guard let profile = store.configuration.profiles.first(where: { $0.application.key == identity.key }) else { return nil }
+        return try? store.configuration.resolvedProfile(profile.id)
     }
     private func isOwnShortcut(_ event: NSEvent) -> Bool {
         guard let recorded = KeyboardShortcuts.getShortcut(for: .togglePhrasePerch),
@@ -170,6 +172,7 @@ final class TriggerSessionService {
                     invalidate(reason: floating.failureMessage)
                     return
                 }
+                menuProfile = profile
                 let origin = captured.usedCachedCaret ? "缓存光标" : anchor.source
                 captured.screenID = environment.screenIdentifier(anchor.point)
                 captured.anchorSource = origin
@@ -197,7 +200,7 @@ final class TriggerSessionService {
     }
     private func select(_ selection: UUID) {
         guard let source = hold.trigger, hold.phase == .choosing,
-            let target, let profile = profile(for: target), profile.canTrigger(source),
+            let target, let profile = menuProfile, profile.canTrigger(source),
             let snippet = profile.buttons.first(where: { $0.id == selection && $0.isEnabled }),
             let token = hold.select(source, selection: selection) else { return }
         floating.hide()
@@ -235,6 +238,7 @@ final class TriggerSessionService {
             guard hold.isCurrent(token) else { return }
             notice = result == .insertedVerified || result == .copied ? "" : input.message
             hold.cancel()
+            menuProfile = nil
             snapshot = nil
             holdTask = nil
         }
@@ -263,6 +267,7 @@ final class TriggerSessionService {
         deadlineTask?.cancel()
         deadlineTask = nil
         snapshot = nil
+        menuProfile = nil
         input.cancel()
         floating.hide()
         if let token { Task { await input.releaseTarget(token) } }

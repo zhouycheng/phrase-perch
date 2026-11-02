@@ -31,6 +31,10 @@ final class MainWindowViewModel {
     var isRestarting: Bool { authorization.isRestarting }
     var loadIssue: ConfigurationIssue? { repository.issue }
     var deletionName: String { profiles.first { $0.id == deleteProfile }?.displayName ?? "" }
+    var deletionMessage: String {
+        let count = profiles.flatMap(\.syncs).filter { $0.sourceProfileID == deleteProfile }.count
+        return deletionName + (count == 0 ? "" : "\n同时移除其他应用中引用它的 \(count) 个同步入口。")
+    }
     var selectedEditor: ProfileEditorViewModel? { selectedProfile.flatMap { editors[$0] } }
     var runningApplications: [ApplicationChoice] { ApplicationCatalog.runningApplications() }
     func selectProfile(_ id: UUID) {
@@ -61,6 +65,7 @@ final class MainWindowViewModel {
                 profileID: id, repository: repository, editing: editing,
                 chooseAttachments: { [files] in files.chooseAttachments(multiple: $0) })
             editor.onOpenConfiguration = { [weak self] in self?.openConfiguration() }
+            editor.onSelectProfile = { [weak self] in self?.selectProfile($0) }
             editors[id] = editor
         }
     }

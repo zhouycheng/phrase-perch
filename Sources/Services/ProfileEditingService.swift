@@ -15,14 +15,27 @@ final class ProfileEditingService {
 
     func removeProfile(_ id: UUID) {
         guard repository.isReady else { return }
-        repository.update { $0.profiles.removeAll { $0.id == id } }
+        repository.update { configuration in
+            configuration.profiles.removeAll { $0.id == id }
+            for index in configuration.profiles.indices {
+                let removed = Set(configuration.profiles[index].syncs.filter { $0.sourceProfileID == id }.map(\.id))
+                configuration.profiles[index].syncs.removeAll { removed.contains($0.id) }
+                configuration.profiles[index].rootNodes.removeAll { removed.contains($0.id) }
+                for group in configuration.profiles[index].groups.indices {
+                    configuration.profiles[index].groups[group].children.removeAll { removed.contains($0.id) }
+                }
+            }
+        }
     }
 
     func addProfile(_ profile: AppProfile) -> Bool {
         guard repository.isReady,
             !repository.configuration.profiles.contains(where: { $0.application.key == profile.application.key })
         else { return false }
-        repository.update { $0.profiles.append(profile) }
+        var configuration = repository.configuration
+        configuration.profiles.append(profile)
+        guard (try? configuration.validateSyncReferences()) != nil else { return false }
+        repository.update { $0 = configuration }
         return true
     }
 

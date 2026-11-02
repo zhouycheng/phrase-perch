@@ -9,6 +9,8 @@ final class ProfileEditorViewModel {
     private let editing: ProfileEditingService
     private var subscription: UUID?
     private(set) var session: SnippetEditorSession
+    private(set) var selectedSyncID: UUID?
+    var onSelectProfile: ((UUID) -> Void)?
     private(set) var deletionID: UUID?
     private(set) var selectedNodeIDs = Set<UUID>()
     private(set) var batchDeletionIDs: Set<UUID>?
@@ -74,7 +76,7 @@ final class ProfileEditorViewModel {
             ids.compactMap { id in profile?.buttons.first { $0.id == id } }.dropFirst(session.page * SnippetEditorSession.pageSize).prefix(
                 SnippetEditorSession.pageSize))
     }
-    var selectedSnippet: Snippet? { profile?.buttons.first { $0.id == session.selectedID } }
+    var selectedSnippet: Snippet? { selectedSyncID == nil ? profile?.buttons.first { $0.id == session.selectedID } : nil }
     var hierarchyIssue: String? { repository.validationMessage ?? repository.saveIssue?.message }
     var saveStatus: String { repository.saveStatus }
     var configurationIssue: ConfigurationIssue? { repository.saveIssue }
@@ -91,6 +93,7 @@ final class ProfileEditorViewModel {
     }
     func select(_ id: UUID) {
         guard ids.contains(id) else { return }
+        selectedSyncID = nil
         session.select(id, in: ids)
         showSaveIssue = false
         attachmentMessage = nil
@@ -101,6 +104,7 @@ final class ProfileEditorViewModel {
         showSaveIssue = false
     }
     func reconcile() {
+        if let selectedSyncID, !nodes.contains(MenuNode(kind: .sync, id: selectedSyncID)) { self.selectedSyncID = nil }
         if let invalid = groupPath.firstIndex(where: { id in profile?.groups.contains(where: { $0.id == id }) != true }) {
             groupPath.removeSubrange(invalid...)
         }
@@ -110,6 +114,7 @@ final class ProfileEditorViewModel {
         if saveStatus != "保存失败" { showSaveIssue = false }
     }
     func openGroup(_ id: UUID?) {
+        selectedSyncID = nil
         clearBatchSelection()
         if let id {
             if let index = groupPath.firstIndex(of: id) { groupPath = Array(groupPath.prefix(index + 1)) }
@@ -121,12 +126,45 @@ final class ProfileEditorViewModel {
     func addGroup() { editing.addGroup(to: profileID, parent: currentGroup) }
     func groupTitle(_ id: UUID) -> String { profile?.groups.first { $0.id == id }?.title ?? "" }
     func setGroupTitle(_ title: String, id: UUID) { editing.editGroup(id, in: profileID) { $0.title = title } }
+    var syncSources: [AppProfile] { batchProfiles.filter { $0.id != profileID } }
+    var selectedSyncSource: AppProfile? {
+        guard let sync = profile?.syncs.first(where: { $0.id == selectedSyncID }) else { return nil }
+        return batchProfiles.first { $0.id == sync.sourceProfileID }
+    }
+    func nodeTitle(_ node: MenuNode) -> String {
+        guard node.kind == .sync else { return profile?.title(of: node) ?? "" }
+        let source = profile?.syncs.first { $0.id == node.id }?.sourceProfileID
+        return batchProfiles.first { $0.id == source }?.displayName ?? "来源应用已移除"
+    }
+    func canSync(from sourceID: UUID) -> Bool { editing.canSync(sourceID, to: profileID) }
+    func addSync(from sourceID: UUID) {
+        do { selectedSyncID = try editing.addSync(from: sourceID, to: profileID, group: currentGroup); batchIssue = nil }
+        catch { batchIssue = error.localizedDescription }
+    }
+    func openSyncSource(_ id: UUID) {
+        guard let source = profile?.syncs.first(where: { $0.id == id })?.sourceProfileID else { return }
+        onSelectProfile?(source)
+    }
+    func removeSync(_ id: UUID) {
+        do { try editing.deleteNodes([id], in: profileID, group: currentGroup); batchIssue = nil }
+        catch { batchIssue = error.localizedDescription }
+    }
+    func duplicateSync(_ id: UUID) {
+        do {
+            try editing.transferNodes([id], from: profileID, group: currentGroup,
+                to: profileID, group: currentGroup, copying: true)
+            selectedSyncID = nodes.last?.id
+            batchIssue = nil
+        } catch { batchIssue = error.localizedDescription }
+    }
     func isEnabled(_ node: MenuNode) -> Bool {
+        if node.kind == .sync { return profile?.syncs.first { $0.id == node.id }?.isEnabled ?? false }
         if node.kind == .group { return profile?.groups.first { $0.id == node.id }?.isEnabled ?? false }
         return profile?.buttons.first { $0.id == node.id }?.isEnabled ?? false
     }
     func setEnabled(_ enabled: Bool, node: MenuNode) {
-        if node.kind == .group { editing.editGroup(node.id, in: profileID) { $0.isEnabled = enabled } }
+        if node.kind == .sync { editing.editSync(node.id, in: profileID, enabled: enabled) }
+        else if node.kind == .group { editing.editGroup(node.id, in: profileID) { $0.isEnabled = enabled } }
         else { editing.editSnippet(profileID: profileID, snippetID: node.id) { $0.isEnabled = enabled } }
     }
     func destinations(for node: MenuNode) -> [SnippetGroup] {
@@ -208,8 +246,8 @@ final class ProfileEditorViewModel {
     }
     func activateNode(_ node: MenuNode) {
         if isBatchSelecting { toggleNodeSelection(node.id) }
-        else if node.kind == .group { openGroup(node.id) }
-        else { select(node.id) }
+        else if node.kind == .sync { selectedSyncID = node.id }
+        else if node.kind == .snippet { select(node.id) }
     }
     func clearBatchSelection() {
         cancelListGesture()
@@ -240,6 +278,7 @@ final class ProfileEditorViewModel {
             batchDeletionIDs = selectedNodeIDs
             batchDeletionMembers = counts.ids
             batchDeletionMessage = "将删除 \(counts.groups) 个分组和 \(counts.contents) 条内容，包含所选分组内的全部内容。"
+                + (counts.syncs == 0 ? "" : "同时移除 \(counts.syncs) 个同步入口，来源内容保留。")
         } catch { batchIssue = error.localizedDescription }
     }
     func cancelBatchDeletion() { batchDeletionIDs = nil }

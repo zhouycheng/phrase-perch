@@ -112,6 +112,64 @@ final class TriggerSessionServiceTests: XCTestCase {
         XCTAssertFalse(menu.isPresented)
         XCTAssertEqual(paste.dispatches, 0)
     }
+    func testSyncOnlyProfileUsesDisplayedSnapshotAndCancelsAfterSourceEdit() async throws {
+        let source = AppProfile(application: ApplicationIdentity(bundleIdentifier: "sync.source", fallbackBundlePath: nil),
+            displayName: "来源", buttons: [snippet])
+        let sync = ProfileSync(sourceProfileID: source.id)
+        repository.update {
+            $0.profiles[0].buttons = []
+            $0.profiles[0].syncs = [sync]
+            $0.profiles[0].rootNodes = [MenuNode(kind: .sync, id: sync.id)]
+            $0.profiles.append(source)
+        }
+        await worker.setReadback(before: "", selection: NSRange(location: 0, length: 0), readings: [snippet.text])
+        monitor.onShortcutDown?(); monitor.onShortcutUp?()
+        try await settle()
+        XCTAssertTrue(menu.isPresented)
+        let runtimeID = try XCTUnwrap(menu.shownProfile?.buttons.first?.id)
+        XCTAssertNotEqual(runtimeID, snippet.id)
+        menu.onSelect?(runtimeID); menu.onSelect?(runtimeID)
+        try await settle(180)
+        XCTAssertEqual(paste.copies, [snippet.text])
+        XCTAssertEqual(paste.dispatches, 1)
+        monitor.onShortcutDown?(); monitor.onShortcutUp?()
+        try await settle()
+        let staleID = try XCTUnwrap(menu.shownProfile?.buttons.first?.id)
+        repository.update { $0.profiles[1].buttons[0].text = "已更新" }
+        XCTAssertFalse(menu.isPresented)
+        menu.onSelect?(staleID)
+        try await settle()
+        XCTAssertEqual(paste.dispatches, 1)
+        monitor.onShortcutDown?(); monitor.onShortcutUp?()
+        try await settle()
+        XCTAssertEqual(menu.shownProfile?.buttons.first?.text, "已更新")
+    }
+
+    func testSyncedAttachmentUsesSourceResourceAndSinglePaste() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("sync".utf8).write(to: url)
+        attachmentURL = url
+        let attachment = Snippet(title: "来源附件", content: .attachment(AttachmentReference(fileName: "sync.txt", byteCount: 4)))
+        let source = AppProfile(application: ApplicationIdentity(bundleIdentifier: "sync.attachment", fallbackBundlePath: nil),
+            displayName: "来源", buttons: [attachment])
+        let sync = ProfileSync(sourceProfileID: source.id)
+        repository.update {
+            $0.preferences.copyOnInsert = false
+            $0.profiles[0].buttons = []
+            $0.profiles[0].syncs = [sync]
+            $0.profiles[0].rootNodes = [MenuNode(kind: .sync, id: sync.id)]
+            $0.profiles.append(source)
+        }
+        monitor.onShortcutDown?(); monitor.onShortcutUp?()
+        try await settle()
+        let displayed = try XCTUnwrap(menu.shownProfile?.buttons.first)
+        XCTAssertEqual(displayed.attachment, attachment.attachment)
+        menu.onSelect?(displayed.id); menu.onSelect?(displayed.id)
+        try await settle(120)
+        XCTAssertEqual(paste.fileCopies, [url])
+        XCTAssertEqual(paste.dispatches, 1)
+    }
     func testAttachmentSelectionUsesPasteWhenTextDirectWriteIsEnabled() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
         defer { try? FileManager.default.removeItem(at: url) }

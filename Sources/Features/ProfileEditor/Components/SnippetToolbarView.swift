@@ -23,7 +23,11 @@ struct SnippetToolbarView: View {
     private func header(stacked: Bool) -> some View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("快捷内容").font(.body)
+                HStack {
+                    Text("快捷内容").font(.body)
+                    Spacer(minLength: 0)
+                    batchButton
+                }
                 ViewThatFits(in: .horizontal) {
                     creationButtons(twoRows: false, short: false)
                     creationButtons(twoRows: true, short: false)
@@ -55,7 +59,19 @@ struct SnippetToolbarView: View {
             creationButton("添加附件", short: short ? "附件" : "添加附件", symbol: "paperclip", action: addAttachments)
                 .disabled(importingAttachment)
             creationButton("新建分组", short: short ? "分组" : "新建分组", symbol: "folder.badge.plus", action: addGroup)
-            batchButton
+            Menu {
+                if let model = batchViewModel {
+                    ForEach(model.syncSources) { source in
+                        Button(source.displayName) { model.addSync(from: source.id) }
+                            .disabled(!model.canSync(from: source.id))
+                    }
+                }
+            } label: { creationLabel(short ? "同步" : "新建同步", symbol: "link") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                .disabled(batchViewModel?.syncSources.isEmpty != false)
+                .accessibilityLabel("新建同步").help("同步引入已有应用的全部内容")
         }
     }
 
@@ -67,8 +83,8 @@ struct SnippetToolbarView: View {
                 Divider()
                 Button("删除", role: .destructive) { model.requestBatchDeletion() }
             }
-        } label: { creationLabel("操作", symbol: "ellipsis") }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28)
+        } label: { Image(systemName: "ellipsis").frame(width: 24, height: 18).contentShape(Rectangle()) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24, height: 18)
             .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
             .opacity(batchViewModel?.isBatchSelecting == true ? 1 : 0)
             .allowsHitTesting(batchViewModel?.isBatchSelecting == true)

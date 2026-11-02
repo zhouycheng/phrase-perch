@@ -48,7 +48,7 @@ struct GroupContentsView: View {
                                     })
                             }
                             if viewModel.nodes.isEmpty {
-                                Text("添加文案、附件或分组，也可拖入文件")
+                                Text("添加文案、附件、分组或同步，也可拖入文件")
                                     .foregroundStyle(.secondary).multilineTextAlignment(.center).padding().allowsHitTesting(false)
                             }
                         }

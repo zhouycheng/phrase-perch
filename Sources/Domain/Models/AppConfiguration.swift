@@ -26,6 +26,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     func validate() throws {
         guard schemaVersion == 2 else { throw InputFailure("不支持配置版本 \(schemaVersion)") }
         guard (1...30).contains(preferences.menuTitleCharacterLimit) else { throw InputFailure("标题显示字数应为 1–30") }
+        try validateSyncReferences()
         var assets: [UUID: AttachmentReference] = [:]
         for file in attachments {
             if let existing = assets[file.id], existing != file { throw InputFailure("附件资源信息冲突") }
@@ -47,6 +48,9 @@ struct AppConfiguration: Codable, Equatable, Sendable {
             for group in profile.groups {
                 guard ids.insert(group.id).inserted else { throw InputFailure("分组 ID 重复") }
                 guard !group.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw InputFailure("分组名称不能为空") }
+            }
+            for sync in profile.syncs {
+                guard ids.insert(sync.id).inserted else { throw InputFailure("同步 ID 重复") }
             }
             try profile.validateHierarchy()
             for button in profile.buttons {
