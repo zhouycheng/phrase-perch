@@ -20,6 +20,11 @@ final class ProfileEditorViewModel {
     private(set) var marqueeRect: CGRect?
     private(set) var draggingNodeIDs = Set<UUID>()
     private(set) var insertionBeforeID: UUID?
+    private(set) var reorderHasMoved = false
+    private(set) var suppressListActivation = false
+    private(set) var pagePreview = ContentPagePreview()
+    private var previewScreen: CGRect?
+    private var gestureRevision: Int?
     private var gestureSelection = Set<UUID>()
     private var gestureOrder: [UUID] = []
     private var marqueeStart: CGPoint?
@@ -110,7 +115,10 @@ final class ProfileEditorViewModel {
         }
         session.reconcile(ids)
         selectedNodeIDs.formIntersection(nodes.map(\.id))
-        if !gestureOrder.isEmpty && gestureOrder != nodes.map(\.id) { cancelListGesture() }
+        if isListGestureActive && (gestureOrder != nodes.map(\.id) || gestureRevision != repository.revision) {
+            cancelListGesture()
+        }
+        refreshPagePreview()
         if saveStatus != "保存失败" { showSaveIssue = false }
     }
     func openGroup(_ id: UUID?) {
@@ -239,6 +247,20 @@ final class ProfileEditorViewModel {
     var isBatchSelecting: Bool { !selectedNodeIDs.isEmpty }
     var isListGestureActive: Bool { marqueeRect != nil || !draggingNodeIDs.isEmpty }
 
+    func setPreviewScreen(_ visible: CGRect?) {
+        guard previewScreen != visible else { return }
+        cancelListGesture()
+        previewScreen = visible
+        refreshPagePreview()
+    }
+    private func refreshPagePreview() {
+        guard !isListGestureActive else { return }
+        pagePreview = previewScreen.map {
+            ContentPagePreview(configuration: repository.configuration, profileID: profileID, groupPath: groupPath, visible: $0)
+        } ?? ContentPagePreview()
+    }
+    func prepareListPress() { suppressListActivation = false }
+
     func toggleNodeSelection(_ id: UUID) {
         guard nodes.contains(where: { $0.id == id }) else { return }
         if !selectedNodeIDs.insert(id).inserted { selectedNodeIDs.remove(id) }
@@ -297,6 +319,7 @@ final class ProfileEditorViewModel {
         guard !isListGestureActive else { return }
         gestureSelection = selectedNodeIDs
         gestureOrder = nodes.map(\.id)
+        gestureRevision = repository.revision
         marqueeStart = point
         marqueeRect = CGRect(origin: point, size: .zero)
         if !additive { selectedNodeIDs = [] }
@@ -313,21 +336,25 @@ final class ProfileEditorViewModel {
         guard !isListGestureActive, nodes.contains(where: { $0.id == id }) else { return }
         gestureSelection = selectedNodeIDs
         gestureOrder = nodes.map(\.id)
+        gestureRevision = repository.revision
         if !selectedNodeIDs.contains(id) { selectedNodeIDs = [id] }
         draggingNodeIDs = selectedNodeIDs
         insertionBeforeID = id
+        suppressListActivation = true
     }
     func updateInsertion(at point: CGPoint, frames: [UUID: CGRect]) {
         guard !draggingNodeIDs.isEmpty else { return }
+        reorderHasMoved = true
         insertionBeforeID = nodes.first { node in
             !draggingNodeIDs.contains(node.id) && frames[node.id].map { point.y < $0.midY } == true
         }?.id
     }
     func finishListGesture(inside: Bool) {
         guard inside else { cancelListGesture(); return }
-        let dragged = draggingNodeIDs, next = insertionBeforeID
+        if !draggingNodeIDs.isEmpty && !reorderHasMoved { cancelListGesture(); return }
+        let dragged = draggingNodeIDs, next = insertionBeforeID, moved = reorderHasMoved
         resetListGesture()
-        guard !dragged.isEmpty else { return }
+        guard !dragged.isEmpty, moved else { return }
         do { try editing.reorderNodes(dragged, in: profileID, group: currentGroup, before: next) }
         catch { batchIssue = error.localizedDescription }
     }
@@ -340,8 +367,11 @@ final class ProfileEditorViewModel {
         marqueeStart = nil
         draggingNodeIDs = []
         insertionBeforeID = nil
+        reorderHasMoved = false
         gestureOrder = []
+        gestureRevision = nil
         gestureSelection = []
+        refreshPagePreview()
     }
     func retrySave() { Task { _ = await repository.flush() } }
     func openConfiguration() {

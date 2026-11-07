@@ -78,11 +78,11 @@ final class BatchManagementPresentationTests: PresentationTestCase {
         try await Task.sleep(for: .milliseconds(80))
         XCTAssertEqual(model.selectedNodeIDs, [profile.buttons[0].id, profile.buttons[2].id])
         XCTAssertEqual(model.session.selectedID, profile.buttons[1].id)
-        try click(window, root, at: CGPoint(x: 503, y: 22))
+        try click(window, root, at: CGPoint(x: 495, y: 22))
         try await Task.sleep(for: .milliseconds(80))
         XCTAssertFalse(store.configuration.profiles[0].buttons[0].isEnabled)
         XCTAssertEqual(model.selectedNodeIDs, [profile.buttons[0].id, profile.buttons[2].id])
-        try click(window, root, at: CGPoint(x: 562, y: 22))
+        try click(window, root, at: CGPoint(x: 554, y: 22))
         try await Task.sleep(for: .milliseconds(60))
         XCTAssertEqual(model.deletionID, profile.buttons[0].id)
         XCTAssertEqual(model.session.selectedID, profile.buttons[1].id)
@@ -125,12 +125,172 @@ final class BatchManagementPresentationTests: PresentationTestCase {
         model.toggleNodeSelection(profile.buttons[0].id)
         model.toggleNodeSelection(profile.buttons[2].id)
         let revision = store.revision
-        try await drag(window, root, from: CGPoint(x: 200, y: 22), to: CGPoint(x: 200, y: 205), hold: 0.42)
+        try await drag(window, root, from: CGPoint(x: 200, y: 22), to: CGPoint(x: 200, y: 205), hold: 0.7)
         XCTAssertEqual(model.nodes.map(\.id), [profile.buttons[1].id, profile.buttons[3].id,
             profile.buttons[0].id, profile.buttons[2].id])
         XCTAssertEqual(store.revision, revision + 1)
         XCTAssertFalse(model.isListGestureActive)
         try savePreview(root, name: "batch-desktop-reordered.png")
+    }
+
+    func testDesktopStationaryLongPressLiftsBeforeMovementAndDoesNotActivateOnRelease() async throws {
+        try requireVisibleUITests()
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let (window, root) = try await makeListWindow(model)
+        defer { window.close() }
+        model.select(profile.buttons[1].id)
+        let revision = store.revision
+        let point = CGPoint(x: 200, y: 22)
+        NSApp.sendEvent(try mouse(.leftMouseDown, window: window, root: root, at: point,
+            timestamp: ProcessInfo.processInfo.systemUptime))
+        try await Task.sleep(for: .milliseconds(680))
+        XCTAssertEqual(model.draggingNodeIDs, [profile.buttons[0].id])
+        XCTAssertFalse(model.reorderHasMoved)
+        XCTAssertEqual(store.revision, revision)
+        try await Task.sleep(for: .milliseconds(240))
+        try savePreview(root, name: "content-list-floating.png")
+        NSApp.sendEvent(try mouse(.leftMouseUp, window: window, root: root, at: point,
+            timestamp: ProcessInfo.processInfo.systemUptime))
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertFalse(model.isListGestureActive)
+        XCTAssertEqual(model.session.selectedID, profile.buttons[1].id)
+        XCTAssertEqual(store.revision, revision)
+        XCTAssertEqual(model.nodes, profile.rootNodes)
+        try savePreview(root, name: "content-list-restored.png")
+        try click(window, root, at: point)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(model.session.selectedID, profile.buttons[0].id)
+    }
+
+    func testDesktopEscapeDuringLiftCancelsWithoutWriting() async throws {
+        try requireVisibleUITests()
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let (window, root) = try await makeListWindow(model)
+        defer { window.close() }
+        let revision = store.revision
+        let start = CGPoint(x: 200, y: 22), end = CGPoint(x: 200, y: 180)
+        NSApp.sendEvent(try mouse(.leftMouseDown, window: window, root: root, at: start,
+            timestamp: ProcessInfo.processInfo.systemUptime))
+        try await Task.sleep(for: .milliseconds(680))
+        XCTAssertTrue(model.isListGestureActive)
+        NSApp.sendEvent(try mouse(.leftMouseDragged, window: window, root: root, at: end,
+            timestamp: ProcessInfo.processInfo.systemUptime))
+        try await Task.sleep(for: .milliseconds(240))
+        try savePreview(root, name: "content-list-reorder-preview.png")
+        let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        NSApp.sendEvent(escape)
+        NSApp.sendEvent(try mouse(.leftMouseUp, window: window, root: root, at: end,
+            timestamp: ProcessInfo.processInfo.systemUptime))
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertFalse(model.isListGestureActive)
+        XCTAssertTrue(model.selectedNodeIDs.isEmpty)
+        XCTAssertEqual(model.nodes, profile.rootNodes)
+        XCTAssertEqual(store.revision, revision)
+    }
+
+    func testPagedContentListRendersAtSupportedWindowSizes() async throws {
+        let (store, model, _) = try await fixture(count: 20)
+        defer { model.stop() }
+        let coordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: store))
+        defer { coordinator.stop() }
+        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+            CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+            let root = NSHostingView(rootView: makeMainWindowView(coordinator))
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = root
+            root.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(120))
+            try savePreview(root, name: "content-pages-\(Int(size.width)).png")
+            XCTAssertEqual(coordinator.mainWindowViewModel.selectedEditor?.pagePreview.markers.count, 2)
+            XCTAssertEqual(root.bounds.size, size)
+            window.close()
+        }
+    }
+
+    func testDesktopAttachmentGroupAndSyncLiftAndActiveGroupTextKeepsEditing() async throws {
+        try requireVisibleUITests()
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let editing = ProfileEditingService(repository: store)
+        editing.editSnippet(profileID: profile.id, snippetID: profile.buttons[0].id) {
+            $0.content = .attachment(AttachmentReference(fileName: "附件.png", byteCount: 3))
+        }
+        model.addGroup()
+        let group = try XCTUnwrap(model.profile?.groups.first)
+        let source = AppProfile(application: ApplicationIdentity(bundleIdentifier: "mixed.source", fallbackBundlePath: nil),
+            displayName: "同步来源", buttons: [Snippet(title: "来源内容", text: "正文")])
+        store.update { $0.profiles.append(source) }
+        model.addSync(from: source.id)
+        let sync = try XCTUnwrap(model.profile?.syncs.first)
+        let (window, root) = try await makeListWindow(model)
+        defer { window.close() }
+        let revision = store.revision, order = model.nodes
+        for id in [profile.buttons[0].id, group.id, sync.id] {
+            model.clearBatchSelection()
+            let rows = ContentListLayout(nodes: model.nodes, markers: model.pagePreview.markers, width: 568)
+            let frame = try XCTUnwrap(rows.frames[id])
+            let point = CGPoint(x: 30, y: frame.midY)
+            NSApp.sendEvent(try mouse(.leftMouseDown, window: window, root: root, at: point,
+                timestamp: ProcessInfo.processInfo.systemUptime))
+            try await Task.sleep(for: .milliseconds(680))
+            XCTAssertEqual(model.draggingNodeIDs, [id])
+            NSApp.sendEvent(try mouse(.leftMouseUp, window: window, root: root, at: point,
+                timestamp: ProcessInfo.processInfo.systemUptime))
+            try await Task.sleep(for: .milliseconds(240))
+            XCTAssertEqual(model.nodes, order)
+            XCTAssertEqual(store.revision, revision)
+        }
+        let row = try XCTUnwrap(ContentListLayout(nodes: model.nodes, markers: model.pagePreview.markers, width: 568).frames[group.id])
+        let point = CGPoint(x: 200, y: row.midY)
+        try click(window, root, at: point)
+        try await Task.sleep(for: .milliseconds(80))
+        let editor = try XCTUnwrap(window.firstResponder as? NSTextView)
+        NSApp.sendEvent(try mouse(.leftMouseDown, window: window, root: root, at: point,
+            timestamp: ProcessInfo.processInfo.systemUptime))
+        try await Task.sleep(for: .milliseconds(680))
+        XCTAssertFalse(model.isListGestureActive)
+        NSApp.sendEvent(try mouse(.leftMouseUp, window: window, root: root, at: point,
+            timestamp: ProcessInfo.processInfo.systemUptime))
+        editor.selectAll(nil)
+        editor.insertText("编辑中的分组", replacementRange: editor.selectedRange())
+        XCTAssertEqual(model.groupTitle(group.id), "编辑中的分组")
+        try savePreview(root, name: "content-list-mixed.png")
+    }
+
+    func testDesktopLosingKeyWindowCancelsPendingAndLiftedPress() async throws {
+        try requireVisibleUITests()
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let (window, root) = try await makeListWindow(model)
+        let other = NSWindow(contentRect: CGRect(x: 750, y: 100, width: 200, height: 150),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { window.close(); other.close() }
+        let revision = store.revision
+        for wait in [100, 680] {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertTrue(window.isKeyWindow)
+            let point = CGPoint(x: 200, y: 22)
+            NSApp.sendEvent(try mouse(.leftMouseDown, window: window, root: root, at: point,
+                timestamp: ProcessInfo.processInfo.systemUptime))
+            try await Task.sleep(for: .milliseconds(wait))
+            if wait > 600 { XCTAssertTrue(model.isListGestureActive) }
+            other.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(680))
+            XCTAssertFalse(model.isListGestureActive)
+            NSApp.sendEvent(try mouse(.leftMouseUp, window: window, root: root, at: point,
+                timestamp: ProcessInfo.processInfo.systemUptime))
+            XCTAssertEqual(model.nodes, profile.rootNodes)
+            XCTAssertEqual(store.revision, revision)
+        }
     }
 
     func testDesktopMarqueeAutoScrollSelectsBeyondViewport() async throws {
@@ -155,12 +315,12 @@ final class BatchManagementPresentationTests: PresentationTestCase {
         let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
             characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
-        window.sendEvent(escape)
+        NSApp.sendEvent(escape)
         try await Task.sleep(for: .milliseconds(60))
         XCTAssertTrue(model.selectedNodeIDs.isEmpty)
         model.toggleNodeSelection(profile.buttons[0].id)
         let before = store.configuration
-        try await drag(window, root, from: CGPoint(x: 200, y: 22), to: CGPoint(x: 700, y: 250), hold: 0.42)
+        try await drag(window, root, from: CGPoint(x: 200, y: 22), to: CGPoint(x: 700, y: 250), hold: 0.7)
         XCTAssertEqual(store.configuration, before)
         XCTAssertEqual(model.selectedNodeIDs, [profile.buttons[0].id])
         XCTAssertFalse(model.isListGestureActive)
@@ -173,7 +333,7 @@ final class BatchManagementPresentationTests: PresentationTestCase {
         let (window, root) = try await makeListWindow(model)
         defer { window.close() }
         let revision = store.revision
-        try await drag(window, root, from: CGPoint(x: 200, y: 22), to: CGPoint(x: 200, y: 304), hold: 0.42, dwell: 0.8)
+        try await drag(window, root, from: CGPoint(x: 200, y: 22), to: CGPoint(x: 200, y: 304), hold: 0.7, dwell: 0.8)
         let index = try XCTUnwrap(model.nodes.firstIndex { $0.id == profile.buttons[0].id })
         try savePreview(root, name: "batch-reorder-auto-scroll.png")
         XCTAssertGreaterThan(index, 7)
@@ -207,23 +367,23 @@ final class BatchManagementPresentationTests: PresentationTestCase {
         let down = try mouse(.leftMouseDown, window: window, root: root, at: point, timestamp: now)
         let up = try mouse(.leftMouseUp, window: window, root: root, at: point, timestamp: now + 0.02)
         NSApp.postEvent(up, atStart: true)
-        window.sendEvent(down)
-        window.sendEvent(up)
+        NSApp.sendEvent(down)
+        NSApp.sendEvent(up)
     }
     private func drag(_ window: NSWindow, _ root: NSView, from start: CGPoint, to end: CGPoint,
         hold: TimeInterval, dwell: TimeInterval = 0.1) async throws {
-        window.sendEvent(try mouse(.leftMouseDown, window: window, root: root, at: start,
+        NSApp.sendEvent(try mouse(.leftMouseDown, window: window, root: root, at: start,
             timestamp: ProcessInfo.processInfo.systemUptime))
         if hold > 0 { try await Task.sleep(for: .milliseconds(Int(hold * 1000))) }
         for step in 1...8 {
             try await Task.sleep(for: .milliseconds(30))
             let progress = CGFloat(step) / 8
             let point = CGPoint(x: start.x + (end.x - start.x) * progress, y: start.y + (end.y - start.y) * progress)
-            window.sendEvent(try mouse(.leftMouseDragged, window: window, root: root, at: point,
+            NSApp.sendEvent(try mouse(.leftMouseDragged, window: window, root: root, at: point,
                 timestamp: ProcessInfo.processInfo.systemUptime))
         }
         try await Task.sleep(for: .milliseconds(Int(dwell * 1000)))
-        window.sendEvent(try mouse(.leftMouseUp, window: window, root: root, at: end,
+        NSApp.sendEvent(try mouse(.leftMouseUp, window: window, root: root, at: end,
             timestamp: ProcessInfo.processInfo.systemUptime))
         try await Task.sleep(for: .milliseconds(100))
     }

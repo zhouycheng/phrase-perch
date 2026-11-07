@@ -20,14 +20,20 @@ extension AppConfiguration {
     }
 
     func resolvedProfile(_ id: UUID) throws -> AppProfile {
+        try resolveProfile(id).profile
+    }
+
+    func resolveProfile(_ id: UUID) throws -> ResolvedProfile {
         try validateSyncReferences()
         guard let original = profiles.first(where: { $0.id == id }) else { throw InputFailure("应用已移除") }
         var result = original
         result.buttons = []; result.groups = []; result.syncs = []
-        func expand(_ nodes: [MenuNode], in profile: AppProfile, imported: Bool) throws -> [MenuNode] {
+        var localNodeIDs: [UUID: UUID] = [:]
+        func expand(_ nodes: [MenuNode], in profile: AppProfile, imported: Bool, owner: UUID? = nil) throws -> [MenuNode] {
             var expanded: [MenuNode] = []
             for node in nodes {
                 let runtimeID = imported ? UUID() : node.id
+                localNodeIDs[runtimeID] = owner ?? node.id
                 switch node.kind {
                 case .snippet:
                     guard var snippet = profile.buttons.first(where: { $0.id == node.id }) else {
@@ -41,7 +47,7 @@ extension AppConfiguration {
                         throw InputFailure("引用的分组不存在")
                     }
                     group.id = runtimeID
-                    group.children = try expand(group.children, in: profile, imported: imported)
+                    group.children = try expand(group.children, in: profile, imported: imported, owner: owner)
                     result.groups.append(group)
                     expanded.append(MenuNode(kind: .group, id: runtimeID))
                 case .sync:
@@ -49,7 +55,9 @@ extension AppConfiguration {
                         let source = profiles.first(where: { $0.id == sync.sourceProfileID }) else {
                         throw InputFailure("同步的来源应用不存在")
                     }
-                    if sync.isEnabled { expanded += try expand(source.rootNodes, in: source, imported: true) }
+                    if sync.isEnabled {
+                        expanded += try expand(source.rootNodes, in: source, imported: true, owner: owner ?? sync.id)
+                    }
                 }
             }
             return expanded
@@ -57,6 +65,6 @@ extension AppConfiguration {
         // Validate local ownership before walking either group or application references.
         for profile in profiles { try profile.validateHierarchy() }
         result.rootNodes = try expand(original.rootNodes, in: original, imported: false)
-        return result
+        return ResolvedProfile(profile: result, localNodeIDs: localNodeIDs)
     }
 }
