@@ -91,6 +91,7 @@ final class AuthorizationServiceTests: PresentationTestCase {
         for (width, height) in [(460, 430), (880, 560), (960, 620), (1070, 620), (1280, 800)] {
             let root = NSHostingView(rootView: PermissionSetupView(requirements: requirements,
                 isRestarting: false, feedback: "", onAction: { _ in }, onClose: {}))
+            root.sizingOptions = []
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: height),
                 styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
