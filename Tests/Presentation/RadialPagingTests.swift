@@ -3,6 +3,118 @@ import XCTest
 @testable import PhrasePerch
 
 final class RadialPagingTests: PresentationTestCase {
+    private func previewProfile(_ count: Int) -> AppProfile {
+        AppProfile(application: ApplicationIdentity(bundleIdentifier: "page.preview", fallbackBundlePath: nil),
+            displayName: "分页预览", buttons: (0..<count).map { Snippet(title: "文案\($0)", text: "正文") })
+    }
+
+    func testEditorPageBoundariesIncludeNavigationSlotsAtRootAndInGroups() throws {
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        for (count, pages) in [(8, 1), (9, 2), (14, 2), (15, 3)] {
+            let profile = previewProfile(count)
+            let preview = ContentPagePreview(configuration: AppConfiguration(profiles: [profile]),
+                profileID: profile.id, groupPath: [], visible: visible)
+            XCTAssertNil(preview.issue)
+            XCTAssertEqual(preview.ranges.values.map(\.upperBound).max(), pages)
+            XCTAssertEqual(preview.markers.count, pages - 1)
+            if pages > 1 { XCTAssertEqual(preview.markers[profile.buttons[7].id], "第 2 页") }
+            if pages > 2 { XCTAssertEqual(preview.markers[profile.buttons[13].id], "第 3 页") }
+        }
+        for (count, pages) in [(7, 1), (8, 2), (13, 2), (14, 3)] {
+            var profile = previewProfile(count)
+            let child = SnippetGroup(title: "子分组", children: profile.rootNodes)
+            let parent = SnippetGroup(title: "父分组", children: [MenuNode(kind: .group, id: child.id)])
+            profile.groups = [parent, child]; profile.rootNodes = [MenuNode(kind: .group, id: parent.id)]
+            let preview = ContentPagePreview(configuration: AppConfiguration(profiles: [profile]),
+                profileID: profile.id, groupPath: [parent.id, child.id], visible: visible)
+            XCTAssertNil(preview.issue)
+            XCTAssertEqual(preview.ranges.values.map(\.upperBound).max(), pages)
+            if pages > 1 { XCTAssertEqual(preview.markers[profile.buttons[6].id], "第 2 页") }
+            if pages > 2 { XCTAssertEqual(preview.markers[profile.buttons[12].id], "第 3 页") }
+        }
+    }
+
+    func testEditorPagePreviewFiltersDisabledAndEmptyEntries() throws {
+        var profile = previewProfile(10)
+        profile.buttons[0].isEnabled = false; profile.buttons[1].isEnabled = false
+        let empty = SnippetGroup(title: "空分组")
+        profile.groups = [empty]; profile.rootNodes.insert(MenuNode(kind: .group, id: empty.id), at: 2)
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        var preview = ContentPagePreview(configuration: AppConfiguration(profiles: [profile]),
+            profileID: profile.id, groupPath: [], visible: visible)
+        XCTAssertEqual(preview.ranges.count, 8)
+        XCTAssertTrue(preview.markers.isEmpty)
+        XCTAssertNil(preview.ranges[empty.id])
+        profile.buttons[0].isEnabled = true
+        preview = ContentPagePreview(configuration: AppConfiguration(profiles: [profile]),
+            profileID: profile.id, groupPath: [], visible: visible)
+        XCTAssertEqual(preview.markers[profile.buttons[8].id], "第 2 页")
+        let nested = ContentPagePreview(configuration: AppConfiguration(profiles: [profile]),
+            profileID: profile.id, groupPath: [empty.id], visible: visible)
+        XCTAssertTrue(nested.ranges.isEmpty)
+        XCTAssertNil(nested.issue)
+    }
+
+    func testCollapsedSyncShowsCoveredPagesAndContinuation() throws {
+        var source = previewProfile(10)
+        source.application = ApplicationIdentity(bundleIdentifier: "page.source", fallbackBundlePath: nil)
+        var profile = previewProfile(7)
+        let sync = ProfileSync(sourceProfileID: source.id)
+        profile.syncs = [sync]; profile.rootNodes.insert(MenuNode(kind: .sync, id: sync.id), at: 6)
+        let configuration = AppConfiguration(profiles: [source, profile])
+        let preview = ContentPagePreview(configuration: configuration, profileID: profile.id,
+            groupPath: [], visible: CGRect(x: 0, y: 0, width: 1440, height: 900))
+        XCTAssertNil(preview.issue)
+        XCTAssertEqual(preview.ranges[sync.id], 1...3)
+        XCTAssertEqual(preview.rangeLabel(for: sync.id), "第 1–3 页")
+        XCTAssertEqual(preview.markers[profile.buttons[6].id], "第 3 页（续）")
+        let resolved = try configuration.resolveProfile(profile.id)
+        for snippet in resolved.profile.buttons where !profile.buttons.contains(where: { $0.id == snippet.id }) {
+            XCTAssertEqual(resolved.localNodeIDs[snippet.id], sync.id)
+        }
+    }
+
+    func testPreviewUsesScreenAndTitleSettingsAndReportsUnavailableLayout() throws {
+        var profile = previewProfile(20)
+        for index in profile.buttons.indices { profile.buttons[index].title = String(repeating: "宽", count: 30) }
+        var configuration = AppConfiguration(profiles: [profile])
+        configuration.preferences.menuTitleCharacterLimit = 30
+        for visible in [CGRect(x: 0, y: 0, width: 1440, height: 900), CGRect(x: -320, y: 0, width: 320, height: 240)] {
+            let preview = ContentPagePreview(configuration: configuration, profileID: profile.id, groupPath: [], visible: visible)
+            let page = try XCTUnwrap(RadialPage(nodes: RadialNode.contents(profile: profile, group: nil),
+                anchor: CGPoint(x: visible.midX, y: visible.midY), visible: visible, characterLimit: 30))
+            XCTAssertNil(preview.issue)
+            XCTAssertEqual(preview.ranges[profile.buttons[page.consumed].id]?.lowerBound, 2)
+        }
+        let failed = ContentPagePreview(configuration: configuration, profileID: profile.id,
+            groupPath: [], visible: CGRect(x: 0, y: 0, width: 20, height: 20))
+        XCTAssertNotNil(failed.issue)
+        XCTAssertTrue(failed.ranges.isEmpty)
+        configuration.profiles[0].syncs = [ProfileSync(sourceProfileID: UUID())]
+        let invalid = ContentPagePreview(configuration: configuration, profileID: profile.id,
+            groupPath: [], visible: CGRect(x: 0, y: 0, width: 1440, height: 900))
+        XCTAssertNotNil(invalid.issue)
+    }
+
+    func testLiftedRowsCollapseWithoutChangingLogicalHitSlots() throws {
+        let profile = previewProfile(10)
+        let markers = [profile.buttons[7].id: "第 2 页"]
+        let excluded: Set<UUID> = [profile.buttons[1].id, profile.buttons[4].id]
+        let rows = ContentListLayout(nodes: profile.rootNodes, markers: markers, width: 300, excluding: excluded)
+        XCTAssertEqual(rows.nodes.count, 8)
+        XCTAssertNil(rows.frames[profile.buttons[1].id])
+        XCTAssertEqual(rows.frames[profile.buttons[2].id]?.minY, 52)
+        XCTAssertEqual(rows.frames[profile.buttons[7].id]?.minY, 5 * 52 + 28)
+    }
+
+    func testReorderAvoidanceDecaysAcrossNearbyRows() {
+        XCTAssertEqual(ContentListLayout.avoidance(distance: 0), 8)
+        XCTAssertEqual(ContentListLayout.avoidance(distance: 1), 5.6, accuracy: 0.001)
+        XCTAssertEqual(ContentListLayout.avoidance(distance: 2), 3.92, accuracy: 0.001)
+        XCTAssertEqual(ContentListLayout.avoidance(distance: -1), 0)
+        XCTAssertEqual(ContentListLayout.avoidance(distance: 5), 0)
+    }
+
     func testDirectedTemplatesKeepClearanceAndOppositeSlots() throws {
         for width: CGFloat in [88, 132, 210] {
             for count in 1...8 {

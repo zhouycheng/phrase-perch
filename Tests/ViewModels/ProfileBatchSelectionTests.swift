@@ -108,6 +108,103 @@ final class ProfileBatchSelectionTests: XCTestCase {
         XCTAssertFalse(model.ids.contains(profile.buttons[0].id))
     }
 
+    func testStationaryLiftAndOriginalDropDoNotWriteConfiguration() async throws {
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let revision = store.revision
+        model.toggleNodeSelection(profile.buttons[0].id)
+        model.toggleNodeSelection(profile.buttons[2].id)
+        model.beginReordering(profile.buttons[2].id)
+        XCTAssertEqual(model.draggingNodeIDs.count, 2)
+        XCTAssertFalse(model.reorderHasMoved)
+        model.finishListGesture(inside: true)
+        XCTAssertEqual(store.revision, revision)
+        XCTAssertEqual(model.nodes, profile.rootNodes)
+        model.prepareListPress()
+        XCTAssertFalse(model.suppressListActivation)
+        model.clearBatchSelection()
+        model.beginReordering(profile.buttons[0].id)
+        let rows = ContentListLayout(nodes: model.nodes, markers: [:], width: 300, excluding: model.draggingNodeIDs)
+        model.updateInsertion(at: CGPoint(x: 20, y: 0), frames: rows.frames)
+        model.finishListGesture(inside: true)
+        XCTAssertEqual(store.revision, revision)
+        XCTAssertEqual(model.nodes, profile.rootNodes)
+    }
+
+    func testDropChangesWheelOrderAndPageMarkersAfterRelease() async throws {
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let editing = ProfileEditingService(repository: store)
+        for index in 4..<15 {
+            let id = try XCTUnwrap(editing.addSnippet(to: profile.id))
+            editing.editSnippet(profileID: profile.id, snippetID: id) { $0.title = "文案\(index)"; $0.text = "正文" }
+        }
+        model.setPreviewScreen(CGRect(x: 0, y: 0, width: 1440, height: 900))
+        let before = model.pagePreview, revision = store.revision
+        model.beginReordering(profile.buttons[0].id)
+        let rows = ContentListLayout(nodes: model.nodes, markers: before.markers, width: 300, excluding: model.draggingNodeIDs)
+        model.updateInsertion(at: CGPoint(x: 20, y: 2000), frames: rows.frames)
+        XCTAssertEqual(model.pagePreview, before)
+        XCTAssertEqual(store.revision, revision)
+        model.finishListGesture(inside: true)
+        XCTAssertEqual(store.revision, revision + 1)
+        let resolved = try store.configuration.resolvedProfile(profile.id)
+        XCTAssertEqual(RadialNode.contents(profile: resolved, group: nil).compactMap(\.contentID), model.ids)
+        XCTAssertEqual(model.ids.last, profile.buttons[0].id)
+        XCTAssertEqual(model.pagePreview.ranges[profile.buttons[0].id]?.lowerBound, 3)
+        XCTAssertNotEqual(model.pagePreview.markers, before.markers)
+    }
+
+    func testPagePreviewRespondsToSettingsAndScreenAndExternalChangeCancelsLift() async throws {
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        model.setPreviewScreen(visible)
+        model.beginReordering(profile.buttons[0].id)
+        ProfileEditingService(repository: store).editSnippet(profileID: profile.id, snippetID: profile.buttons[1].id) { $0.isEnabled = false }
+        XCTAssertFalse(model.isListGestureActive)
+        XCTAssertNil(model.pagePreview.ranges[profile.buttons[1].id])
+        model.beginReordering(profile.buttons[0].id)
+        model.setPreviewScreen(CGRect(x: 0, y: 0, width: 20, height: 20))
+        XCTAssertFalse(model.isListGestureActive)
+        XCTAssertNotNil(model.pagePreview.issue)
+        model.setPreviewScreen(visible)
+        XCTAssertNil(model.pagePreview.issue)
+        store.update { $0.preferences.menuTitleCharacterLimit = 30 }
+        XCTAssertNil(model.pagePreview.issue)
+        XCTAssertNotNil(model.pagePreview.ranges[profile.buttons[0].id])
+    }
+
+    func testGroupAndSyncDropsUpdateResolvedWheelOrder() async throws {
+        let (store, model, profile) = try await fixture()
+        defer { model.stop() }
+        let editing = ProfileEditingService(repository: store), groupID = profile.groups[0].id
+        let first = try XCTUnwrap(editing.addSnippet(to: profile.id, group: groupID))
+        let second = try XCTUnwrap(editing.addSnippet(to: profile.id, group: groupID))
+        model.openGroup(groupID)
+        model.beginReordering(second)
+        var rows = ContentListLayout(nodes: model.nodes, markers: [:], width: 300, excluding: model.draggingNodeIDs)
+        model.updateInsertion(at: CGPoint(x: 20, y: 0), frames: rows.frames)
+        model.finishListGesture(inside: true)
+        var resolved = try store.configuration.resolvedProfile(profile.id)
+        XCTAssertEqual(RadialNode.contents(profile: resolved, group: groupID).compactMap(\.contentID), [second, first])
+        XCTAssertEqual(model.currentGroup, groupID)
+        model.openGroup(nil)
+        let source = AppProfile(application: ApplicationIdentity(bundleIdentifier: "reorder.sync.source", fallbackBundlePath: nil),
+            displayName: "同步来源", buttons: [Snippet(title: "来源甲", text: "正文"), Snippet(title: "来源乙", text: "正文")])
+        store.update { $0.profiles.append(source) }
+        model.addSync(from: source.id)
+        let sync = try XCTUnwrap(model.profile?.syncs.first)
+        model.beginReordering(sync.id)
+        rows = ContentListLayout(nodes: model.nodes, markers: [:], width: 300, excluding: model.draggingNodeIDs)
+        model.updateInsertion(at: CGPoint(x: 20, y: 0), frames: rows.frames)
+        model.finishListGesture(inside: true)
+        resolved = try store.configuration.resolvedProfile(profile.id)
+        XCTAssertEqual(Array(RadialNode.contents(profile: resolved, group: nil).prefix(2).map(\.title)), ["来源甲", "来源乙"])
+        XCTAssertEqual(model.nodes.first?.id, sync.id)
+        XCTAssertEqual(model.profile?.groups.first { $0.id == groupID }?.children.first?.id, second)
+    }
+
     func testInvalidDestinationReportsFailureAndExternalChangesCancelDrag() async throws {
         let (store, model, profile) = try await fixture()
         defer { model.stop() }
