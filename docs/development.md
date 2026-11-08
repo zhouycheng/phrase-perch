@@ -43,7 +43,7 @@ xcodebuild -project PhrasePerch.xcodeproj -scheme PhrasePerch \
 
 默认测试离屏渲染。窗口复用、菜单动画和连续开合检查默认跳过；验证这些桌面行为时，在 Test Scheme 中设置 `PHRASEPERCH_VISIBLE_UI_TESTS=1`，并让 Test Action 使用自己的环境变量。
 
-UI 改动需检查 880 × 560、960 × 620、1070 × 620 和 1280 × 800 点。提交前运行 `git diff --check`。权限验证应使用实际构建的应用，ad hoc 签名变化可能要求重新授权。
+主窗口 UI 改动需检查 1070 × 620、1280 × 800 和 1440 × 900 点；880 × 560、960 × 620 用于检查缩小下限和独立组件。提交前运行 `git diff --check`。权限验证应使用实际构建的应用，ad hoc 签名变化可能要求重新授权。
 
 已有场景和验证记录见 [交互验收记录](../INTERACTION_VALIDATION.md)。
 
