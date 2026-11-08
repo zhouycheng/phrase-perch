@@ -40,7 +40,7 @@ Use four-space indentation, `UpperCamelCase` types, and `lowerCamelCase` members
 
 ## Testing Guidelines
 
-Name XCTest methods `test<Behavior>`. Add focused regressions for changed behavior, especially trigger eligibility, selection, cancellation, and configuration recovery. Use temporary directories and injected dependencies. Default runs render previews offscreen; enable `PHRASEPERCH_VISIBLE_UI_TESTS=1` in the Test scheme for planned desktop checks. Verify UI changes at 880 × 560, 960 × 620, 1070 × 620, and 1280 × 800 points.
+Name XCTest methods `test<Behavior>`. Add focused regressions for changed behavior, especially trigger eligibility, selection, cancellation, and configuration recovery. Use temporary directories and injected dependencies. Default runs render previews offscreen; enable `PHRASEPERCH_VISIBLE_UI_TESTS=1` in the Test scheme for planned desktop checks. Verify main-window UI changes at 1070 × 620, 1280 × 800, and 1440 × 900 points; use 880 × 560 and 960 × 620 for minimum-window enforcement and isolated component checks.
 
 ## Commit & Pull Request Guidelines
 
