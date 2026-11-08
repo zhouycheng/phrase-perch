@@ -7,7 +7,7 @@ import XCTest
 final class ContentInsertionServiceTests: PresentationTestCase {
     @MainActor
     func testDelayedReadbackAndPartialInsertionNeverResend() async {
-        let text = "中文 👩🏽‍💻\n第二行"
+        let text = "中文 👩🏽‍💻\n# 标题\n**原始 Markdown** 与 `代码`\n第二行"
         for complete in [true, false] {
             let worker = StubInputWorker()
             let system = StubPasteSystem()

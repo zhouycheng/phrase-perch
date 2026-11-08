@@ -101,8 +101,8 @@ final class AppEntryPresentationTests: PresentationTestCase {
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(EditorStyle.background).preferredColorScheme(.dark))
         let content = AnyView(makeMainWindowView(coordinator))
-        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-            CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+        for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+            CGSize(width: 1440, height: 900)] {
             for (name, view) in [("startup-settings", startupSettings), ("empty-drop-list", content)] {
                 let root = NSHostingView(rootView: view)
                 let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)

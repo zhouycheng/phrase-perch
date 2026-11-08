@@ -49,5 +49,5 @@ class PresentationTestCase: XCTestCase {
 @MainActor
 func makeMainWindowView(_ coordinator: ApplicationCoordinator, page: MainPage = .home) -> MainWindowView {
     coordinator.mainWindowViewModel.page = page
-    return MainWindowView(viewModel: coordinator.mainWindowViewModel, preferences: coordinator.preferencesViewModel)
+    return MainWindowView(viewModel: coordinator.mainWindowViewModel, preferences: coordinator.preferencesViewModel, layoutDefaults: nil)
 }
