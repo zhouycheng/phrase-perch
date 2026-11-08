@@ -7,16 +7,16 @@ import XCTest
 final class DomainRulesTests: PresentationTestCase {
     func testEditorColumnsAndRingFitEverySupportedCount() {
         for size in [
-            CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
+            CGSize(width: 1070, height: 620), CGSize(width: 1440, height: 900),
             CGSize(width: 1280, height: 800),
         ] {
             let columns = EditorColumns(width: size.width)
             XCTAssertEqual(
                 EditorColumns.navigation + columns.sidebar + columns.ring + columns.editor + 3, size.width,
                 accuracy: 0.001)
-            XCTAssertGreaterThanOrEqual(columns.sidebar, 190)
-            XCTAssertGreaterThanOrEqual(columns.editor, 260)
-            XCTAssertLessThanOrEqual(columns.editor, 420)
+            XCTAssertGreaterThanOrEqual(columns.sidebar, 200)
+            XCTAssertGreaterThanOrEqual(columns.editor, 300)
+            XCTAssertLessThanOrEqual(columns.editor, 640)
             let area = CGSize(width: columns.ring, height: size.height - 112)
             for count in 1...8 {
                 let layout = EditorRingLayout(size: area, count: count)
@@ -47,7 +47,7 @@ final class DomainRulesTests: PresentationTestCase {
                 compressed.items.dropFirst(index + 1).contains { rect.intersects($0) })
         }
         XCTAssertTrue(EditorRingLayout(size: CGSize(width: 458, height: 508), count: 0).items.isEmpty)
-        XCTAssertEqual(EditorColumns(width: 1600).editor, 420)
+        XCTAssertEqual(EditorColumns(width: 1600).editor, 317)
     }
 
     func testPerApplicationEnableAndExclusiveTriggerChoice() throws {

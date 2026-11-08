@@ -263,8 +263,8 @@ final class ProfileSyncTests: PresentationTestCase {
         XCTAssertEqual(model.selectedSyncSource?.id, source.id)
         XCTAssertNil(model.selectedSnippet)
         XCTAssertEqual(model.nodeTitle(MenuNode(kind: .sync, id: syncID)), source.displayName)
-        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-            CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+        for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+            CGSize(width: 1440, height: 900)] {
             let root = NSHostingView(rootView: makeMainWindowView(coordinator))
             let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false

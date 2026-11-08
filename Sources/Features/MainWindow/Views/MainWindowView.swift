@@ -3,6 +3,7 @@ import SwiftUI
 struct MainWindowView: View {
     @Bindable var viewModel: MainWindowViewModel
     let preferences: PreferencesViewModel
+    var layoutDefaults: UserDefaults? = .standard
 
     var body: some View {
         HStack(spacing: 0) {
@@ -12,7 +13,7 @@ struct MainWindowView: View {
                 Group {
                     switch viewModel.page {
                     case .home:
-                        ProfileWorkspaceView(viewModel: viewModel)
+                        ProfileWorkspaceView(viewModel: viewModel, layoutDefaults: layoutDefaults)
                     case .settings: PreferencesView(viewModel: preferences, requestRecovery: viewModel.requestRecovery)
                     case .about: AboutView(metadata: viewModel.applicationMetadata)
                     }
@@ -20,7 +21,7 @@ struct MainWindowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 880, minHeight: 560)
+        .frame(minWidth: EditorColumns.windowSize.width, minHeight: EditorColumns.windowSize.height)
         .background(EditorStyle.background)
         .preferredColorScheme(.dark)
         .disabled(viewModel.isRestarting)

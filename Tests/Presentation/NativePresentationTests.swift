@@ -78,7 +78,8 @@ final class NativePresentationTests: PresentationTestCase {
         for nested in [false, true] {
             editor.openGroup(nil)
             if nested { editor.openGroup(parent.id); editor.openGroup(child.id) }
-            for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620), CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+            for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+                CGSize(width: 1440, height: 900)] {
                 let root = NSHostingView(rootView: makeMainWindowView(coordinator))
                 let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
@@ -110,7 +111,7 @@ final class NativePresentationTests: PresentationTestCase {
         XCTAssertTrue(first.titleVisibility == .visible)
         XCTAssertFalse(first.styleMask.contains(.fullSizeContentView))
         XCTAssertEqual(first.contentView?.bounds.size, CGSize(width: 1070, height: 620))
-        XCTAssertEqual(first.contentMinSize, CGSize(width: 880, height: 560))
+        XCTAssertEqual(first.contentMinSize, EditorColumns.windowSize)
         coordinator.openMainWindow()
         XCTAssertEqual(NSApp.windows.filter { $0.title == first.title }.count, 1)
         first.close()
@@ -176,7 +177,8 @@ final class NativePresentationTests: PresentationTestCase {
                     keyCode: character == "a" ? 0 : 6))
             return NSApp.mainMenu?.performKeyEquivalent(with: event) == true
         }
-        let editor = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextView }.first { $0.string == first.text })
+        descendants(root).compactMap { $0 as? SnippetBodyTextView.BodyView }.first?.setEditing(true)
+        let editor = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextView }.first { $0.isEditable && $0.string == first.text })
         XCTAssertTrue(window.makeFirstResponder(editor))
         XCTAssertTrue(try key("a"))
         XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: (first.text as NSString).length))
@@ -196,8 +198,9 @@ final class NativePresentationTests: PresentationTestCase {
             editorWidth: 280)
         root.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(100))
+        descendants(root).compactMap { $0 as? SnippetBodyTextView.BodyView }.first?.setEditing(true)
         let secondEditor = try XCTUnwrap(
-            descendants(root).compactMap { $0 as? NSTextView }.first { $0.string == second.text })
+            descendants(root).compactMap { $0 as? NSTextView }.first { $0.isEditable && $0.string == second.text })
         XCTAssertTrue(window.makeFirstResponder(secondEditor))
         _ = try key("z")
         try await Task.sleep(for: .milliseconds(50))
@@ -276,7 +279,8 @@ final class NativePresentationTests: PresentationTestCase {
         defer { if let inputMonitor { NSEvent.removeMonitor(inputMonitor) } }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         func focus(_ string: String) throws -> NSTextView {
-            if let view = descendants(root).compactMap({ $0 as? NSTextView }).first(where: { $0.string == string }) {
+            descendants(root).compactMap { $0 as? SnippetBodyTextView.BodyView }.first?.setEditing(true)
+            if let view = descendants(root).compactMap({ $0 as? NSTextView }).first(where: { $0.isEditable && $0.string == string }) {
                 XCTAssertTrue(window.makeFirstResponder(view))
                 return view
             }
@@ -364,10 +368,8 @@ final class NativePresentationTests: PresentationTestCase {
                         displayName: "TextEdit", lastKnownBundlePath: "/System/Applications/TextEdit.app"),
                 ]
             }
-            for size in [
-                CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-                CGSize(width: 1280, height: 800),
-            ] {
+            for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+                CGSize(width: 1440, height: 900)] {
                 let root = NSHostingView(rootView: makeMainWindowView(coordinator))
                 let window = NSWindow(
                     contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled],
@@ -399,10 +401,8 @@ final class NativePresentationTests: PresentationTestCase {
             }
         }
         for page in [MainPage.settings, .about] {
-            for size in [
-                CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-                CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
-            ] {
+            for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+                CGSize(width: 1440, height: 900)] {
                 let root = NSHostingView(rootView: makeMainWindowView(coordinator, page: page))
                 let window = NSWindow(
                     contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled],
@@ -427,10 +427,8 @@ final class NativePresentationTests: PresentationTestCase {
     }
 
     func testSelectedCapsuleDeletionControlFitsAtEveryNormalWindowSize() {
-        for size in [
-            CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-            CGSize(width: 1280, height: 800),
-        ] {
+        for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+            CGSize(width: 1440, height: 900)] {
             let area = CGSize(width: EditorColumns(width: size.width).ring, height: size.height - 112)
             for width in [CGFloat(88), 160, 210] {
                 for count in 1...8 {

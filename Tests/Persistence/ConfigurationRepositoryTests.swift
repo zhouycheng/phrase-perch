@@ -67,10 +67,8 @@ final class ConfigurationRepositoryTests: PresentationTestCase {
             isolated.update { $0 = store.configuration }
             isolated.report(operation, message: "测试文件操作详情：请检查配置并重试。")
             let issueCoordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: isolated))
-            for size in [
-                CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-                CGSize(width: 1280, height: 800),
-            ] {
+            for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+                CGSize(width: 1440, height: 900)] {
                 for page in [MainPage.home, .settings] {
                     let root = NSHostingView(rootView: makeMainWindowView(issueCoordinator, page: page))
                     let window = NSWindow(

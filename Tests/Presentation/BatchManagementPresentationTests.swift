@@ -19,8 +19,8 @@ final class BatchManagementPresentationTests: PresentationTestCase {
         defer { model.stop() }
         let coordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: store))
         defer { coordinator.stop() }
-        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-            CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+        for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+            CGSize(width: 1440, height: 900)] {
             let width = EditorColumns(width: size.width).ring
             let toolbar = SnippetToolbarView(displayMode: .both, toggleModifier: {}, toggleShortcut: {},
                 addSnippet: {}, addGroup: {}, batchViewModel: model)
@@ -197,8 +197,8 @@ final class BatchManagementPresentationTests: PresentationTestCase {
         defer { model.stop() }
         let coordinator = ApplicationCoordinator(dependencies: AppDependencies(repository: store))
         defer { coordinator.stop() }
-        for size in [CGSize(width: 880, height: 560), CGSize(width: 960, height: 620),
-            CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800)] {
+        for size in [CGSize(width: 1070, height: 620), CGSize(width: 1280, height: 800),
+            CGSize(width: 1440, height: 900)] {
             let root = NSHostingView(rootView: makeMainWindowView(coordinator))
             let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
